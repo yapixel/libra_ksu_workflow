@@ -18,7 +18,7 @@ Automated GitHub Actions CI/CD pipeline for building and packaging the **Linux 3
 The workflow runs a parallel **matrix build** on the upstream base branch (`personal`):
 
 1. **Non-SuSFS**:
-   - Upstream base: `yapixel/android_kernel_xiaomi_libra` branch `personal`
+   - Upstream base: `ximi-libra/android_kernel_xiaomi_libra` branch `personal`
    - Applies manual syscall hooks (`fs/exec.c`, `fs/open.c`, `fs/stat.c`) via `patches/01_ksu_manual_hooks.patch`
    - Applies manual security hooks v2.0 (`security/security.c`) via `patches/02_ksu_manual_security_hooks.patch`
    - Disables branch-link hack and dynamic LSM hooking for clean manual operation

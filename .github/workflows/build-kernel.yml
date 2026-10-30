@@ -6,7 +6,7 @@ on:
       kernel_repo:
         description: 'Kernel source repository'
         required: true
-        default: 'yapixel/android_kernel_xiaomi_libra'
+        default: 'ximi-libra/android_kernel_xiaomi_libra'
         type: string
       kernel_branch:
         description: 'Kernel branch to build'
@@ -48,7 +48,7 @@ jobs:
             name: "SuSFS"
     steps:
       - name: Checkout Workflow Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Install build dependencies
         run: |
@@ -79,9 +79,9 @@ jobs:
           rm clang.tar.gz
 
       - name: Checkout Kernel Source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
-          repository: ${{ inputs.kernel_repo || 'yapixel/android_kernel_xiaomi_libra' }}
+          repository: ${{ inputs.kernel_repo || 'ximi-libra/android_kernel_xiaomi_libra' }}
           ref: ${{ inputs.kernel_branch || 'personal' }}
           path: kernel
           fetch-depth: 1
@@ -242,7 +242,7 @@ jobs:
           echo "zip_path=$GITHUB_WORKSPACE/dist/$ZIP_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Upload Kernel Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ steps.package.outputs.zip_name }}
           path: ${{ steps.package.outputs.zip_path }}
@@ -254,16 +254,17 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout Workflow Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8.0.2
         with:
           path: artifacts
           merge-multiple: true
 
-      - name: Generate Release Notes and Metadata
-        id: release_info
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           DATE=$(date +%y%m%d)
           BRANCH="${{ inputs.kernel_branch || 'personal' }}"
@@ -274,6 +275,7 @@ jobs:
           ls -la artifacts/
 
           printf "## Xiaomi Mi 4c/4s (libra/aqua) Kernel Build\n" > release_body.md
+          printf -- "- **Kernel Repository**: \`%s\`\n" "${{ inputs.kernel_repo || 'ximi-libra/android_kernel_xiaomi_libra' }}" >> release_body.md
           printf -- "- **Kernel Branch**: \`%s\`\n" "$BRANCH" >> release_body.md
           printf -- "- **Build Date**: \`%s\`\n" "$DATE" >> release_body.md
           printf -- "- **Build Matrix**:\n" >> release_body.md
@@ -281,25 +283,22 @@ jobs:
           printf -- "  - **SuSFS v2.3.0**: KernelSU 32704 + SuSFS v2.3.0 de-inlined engine ported from [yapixel/susfs4ksu](https://github.com/yapixel/susfs4ksu)\n\n" >> release_body.md
           printf "### Released Packages\n" >> release_body.md
 
+          ZIP_FILES=()
           for f in artifacts/*.zip; do
             if [ -f "$f" ]; then
               sha=$(sha256sum "$f" | awk '{print $1}')
               size=$(du -h "$f" | awk '{print $1}')
               base=$(basename "$f")
               echo "- **\`$base\`** (${size}) - SHA256: \`$sha\`" >> release_body.md
+              ZIP_FILES+=("$f")
             fi
           done
 
-          echo "date=$DATE" >> "$GITHUB_OUTPUT"
-          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
-          echo "release_name=$RELEASE_NAME" >> "$GITHUB_OUTPUT"
+          if [ ${#ZIP_FILES[@]} -eq 0 ]; then
+            echo "Error: No zip files found to release!"
+            exit 1
+          fi
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.release_info.outputs.tag_name }}
-          name: ${{ steps.release_info.outputs.release_name }}
-          body_path: release_body.md
-          files: artifacts/*.zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          gh release create "$TAG_NAME" "${ZIP_FILES[@]}" \
+            --title "$RELEASE_NAME" \
+            --notes-file release_body.md
