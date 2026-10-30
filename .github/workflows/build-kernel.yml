@@ -11,12 +11,12 @@ on:
       kernel_branch:
         description: 'Kernel branch to build'
         required: true
-        default: 'susfs-3.10'
+        default: 'personal'
         type: choice
         options:
+          - 'personal'
           - 'susfs-3.10'
           - 'lineage-18.1-ksu'
-          - 'personal'
           - 'manual-hook-test'
           - 'lineage-18.1'
       clang_tag:
@@ -103,6 +103,7 @@ jobs:
           # Configure out directory and defconfig
           mkdir -p out
           ARCH=arm64 scripts/kconfig/merge_config.sh -O out arch/arm64/configs/libra_defconfig
+          scripts/config --file out/.config -d CC_WERROR
 
           # Build Image.gz-dtb matching author's build script
           make -j$(nproc) ARCH=arm64 SUBARCH=arm64 O=out \
