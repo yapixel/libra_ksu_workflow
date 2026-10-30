@@ -36,10 +36,10 @@ on:
           - 'true'
           - 'false'
         default: 'all'
-      clang_tag:
-        description: 'Greenforce Clang release tag (default: 20261024 for Clang 24)'
-        required: true
-        default: '20261024'
+      clang_url:
+        description: 'Direct Clang download URL'
+        required: false
+        default: 'https://github.com/ZyCromerZ/Clang/releases/download/23.0.0git-20260130-release/Clang-23.0.0git-20260130.tar.gz'
         type: string
       use_ccache:
         description: 'Enable Ccache Acceleration'
@@ -121,7 +121,7 @@ jobs:
           echo "   SuSFS Version: $SUSFS_VER"
 
   build_manual:
-    name: Manual Hook (Clang, SUSFS=${{ matrix.enable_susfs }})
+    name: Manual Hook (Clang 23, SUSFS=${{ matrix.enable_susfs }})
     if: github.event.inputs.hook_mode == 'all' || github.event.inputs.hook_mode == 'manual' || github.event_name != 'workflow_dispatch'
     needs: matrix_prep
     runs-on: ubuntu-24.04
@@ -137,7 +137,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            bc bison ca-certificates ccache cpio curl flex \
+            aria2 bc bison ca-certificates ccache cpio curl flex \
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
             binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi \
             git jq libelf-dev libssl-dev make python3 zip xz-utils patch
@@ -148,12 +148,12 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-libra-manual-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-${{ github.run_id }}
+          key: ccache-libra-clang23-manual-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-${{ github.run_id }}
           restore-keys: |
-            ccache-libra-manual-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-
-            ccache-libra-manual-${{ matrix.enable_susfs }}-
-            ccache-libra-manual-
-            ccache-libra-
+            ccache-libra-clang23-manual-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-
+            ccache-libra-clang23-manual-${{ matrix.enable_susfs }}-
+            ccache-libra-clang23-manual-
+            ccache-libra-clang23-
 
       - name: Setup Ccache Configurations & Wrappers
         if: github.event.inputs.use_ccache != 'false'
@@ -194,24 +194,18 @@ jobs:
           echo "CCACHE_NOHASHDIR=true" >> $GITHUB_ENV
           echo "CCACHE_TEMPDIR=/dev/shm/ccache-temp" >> $GITHUB_ENV
 
-      - name: Fetch Toolchain (Greenforce Clang)
+      - name: Fetch Toolchain (ZyCromerZ Clang 23)
         run: |
           mkdir -p "$GITHUB_WORKSPACE/toolchain"
           cd "$GITHUB_WORKSPACE/toolchain"
-          TAG="${{ inputs.clang_tag || '20261024' }}"
-          DOWNLOAD_URL=$(curl -s "https://api.github.com/repos/greenforce-project/greenforce_clang/releases/tags/$TAG" \
-            | jq -r '.assets[] | select(.name | test("gf-clang.*\\.tar\\.gz$")) | .browser_download_url' | head -n 1)
-
-          if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
-            echo "Specified tag not found, falling back to latest Greenforce Clang release"
-            DOWNLOAD_URL=$(curl -s "https://api.github.com/repos/greenforce-project/greenforce_clang/releases/latest" \
-              | jq -r '.assets[] | select(.name | test("gf-clang.*\\.tar\\.gz$")) | .browser_download_url' | head -n 1)
-          fi
-
-          echo "Downloading Clang from: $DOWNLOAD_URL"
-          curl -L "$DOWNLOAD_URL" -o clang.tar.gz
+          CLANG_URL="${{ inputs.clang_url || 'https://github.com/ZyCromerZ/Clang/releases/download/23.0.0git-20260130-release/Clang-23.0.0git-20260130.tar.gz' }}"
+          echo "⚡ Downloading Clang from: $CLANG_URL"
+          aria2c -s 16 -x 16 -k 1M "$CLANG_URL" -o clang.tar.gz || curl -fL "$CLANG_URL" -o clang.tar.gz
           tar -xzf clang.tar.gz
           rm clang.tar.gz
+          echo "$GITHUB_WORKSPACE/toolchain/bin" >> "$GITHUB_PATH"
+          echo "Installed Clang version:"
+          "$GITHUB_WORKSPACE/toolchain/bin/clang" --version | head -n1
 
       - name: Checkout Kernel Source
         uses: actions/checkout@v7.0.1
@@ -307,7 +301,7 @@ jobs:
           K_VER="${{ needs.matrix_prep.outputs.ksu_ver }}"
           SUSFS_VER="${{ needs.matrix_prep.outputs.susfs_ver }}"
 
-          RAW_TOOLCHAIN_STR=$(clang --version 2>&1 | head -n1)
+          RAW_TOOLCHAIN_STR=$("$GITHUB_WORKSPACE/toolchain/bin/clang" --version 2>&1 | head -n1)
           TOOLCHAIN_DISPLAY="$RAW_TOOLCHAIN_STR"
 
           echo "ksu_ver=$K_VER" >> "$GITHUB_OUTPUT"
@@ -330,6 +324,9 @@ jobs:
           export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
           if [ "${{ github.event.inputs.use_ccache }}" != "false" ]; then
             export PATH="${{ github.workspace }}/.ccache-bin:$PATH"
+            CCACHE_PREFIX="ccache "
+          else
+            CCACHE_PREFIX=""
           fi
           export ARCH=arm64
           export SUBARCH=arm64
@@ -339,10 +336,16 @@ jobs:
 
           mkdir -p out
           ARCH=arm64 scripts/kconfig/merge_config.sh -O out arch/arm64/configs/libra_defconfig
+          scripts/config --file out/.config -d KSU_HACK_ARM64_BRANCH_LINK
+          scripts/config --file out/.config -d KSU_LSM_SECURITY_HOOKS
           scripts/config --file out/.config -d CC_WERROR
 
+          if [ "${{ matrix.enable_susfs }}" != "true" ]; then
+            scripts/config --file out/.config -d CONFIG_KSU_SUSFS
+          fi
+
           make -j$(nproc) ARCH=arm64 SUBARCH=arm64 O=out \
-            CC="clang" \
+            CC="${CCACHE_PREFIX}clang" \
             AR="llvm-ar" \
             NM="llvm-nm" \
             LD="ld.lld" \
@@ -350,9 +353,9 @@ jobs:
             OBJDUMP="llvm-objdump" \
             STRIP="llvm-strip" \
             CLANG_TRIPLE="aarch64-linux-gnu-" \
-            CROSS_COMPILE="aarch64-linux-gnu-" \
-            CROSS_COMPILE_ARM32="arm-linux-gnueabi-" \
-            CROSS_COMPILE_COMPAT="arm-linux-gnueabi-" \
+            CROSS_COMPILE="${CCACHE_PREFIX}aarch64-linux-gnu-" \
+            CROSS_COMPILE_ARM32="${CCACHE_PREFIX}arm-linux-gnueabi-" \
+            CROSS_COMPILE_COMPAT="${CCACHE_PREFIX}arm-linux-gnueabi-" \
             LLVM=1 \
             LLVM_IAS=1 \
             INSTALL_MOD_STRIP=1 \
@@ -385,23 +388,25 @@ jobs:
           SUSFS_VER="${{ steps.meta.outputs.susfs_ver }}"
           DATE=$(date +%y%m%d)
 
+          sed -i -E "s/kernel\.compiler=.*/kernel.compiler=ZyCromerZ-Clang-23/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
+
           if [ "${{ matrix.enable_susfs }}" = "true" ] && [ -n "$SUSFS_VER" ]; then
-            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (manual, SuSFS ${SUSFS_VER})/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-            ZIP_NAME="KSU_SUSFS_${SUSFS_VER}_libra_3.10.108+${KSU_VER}-manual-${DATE}.zip"
+            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (manual, clang23, SuSFS ${SUSFS_VER})/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
+            ZIP_NAME="KSU_SUSFS_${SUSFS_VER}_libra_3.10.108+${KSU_VER}-manual-clang23-${DATE}.zip"
           else
-            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (manual)/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-            ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-manual-${DATE}.zip"
+            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (manual, clang23)/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
+            ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-manual-clang23-${DATE}.zip"
           fi
 
           mkdir -p "$GITHUB_WORKSPACE/output_artifacts"
           cd "$GITHUB_WORKSPACE/AnyKernel3"
           zip -r9 "$GITHUB_WORKSPACE/output_artifacts/$ZIP_NAME" * -x .git .gitignore README.md *placeholder
 
-          echo "KERNEL_VER='3.10.108'" > "$GITHUB_WORKSPACE/output_artifacts/build_metadata.env"
-          echo "KSU_VER='${KSU_VER}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata.env"
-          echo "TOOLCHAIN_DISPLAY='${{ steps.meta.outputs.toolchain_display }}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata.env"
+          echo "KERNEL_VER='3.10.108'" > "$GITHUB_WORKSPACE/output_artifacts/build_metadata_clang23_manual_${{ matrix.enable_susfs }}.env"
+          echo "KSU_VER='${KSU_VER}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_clang23_manual_${{ matrix.enable_susfs }}.env"
+          echo "TOOLCHAIN_DISPLAY='${{ steps.meta.outputs.toolchain_display }}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_clang23_manual_${{ matrix.enable_susfs }}.env"
           if [ "${{ matrix.enable_susfs }}" = "true" ] && [ -n "$SUSFS_VER" ]; then
-            echo "SUSFS_VER='${SUSFS_VER}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata.env"
+            echo "SUSFS_VER='${SUSFS_VER}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_clang23_manual_${{ matrix.enable_susfs }}.env"
           fi
 
           echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
@@ -410,7 +415,7 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: kernel-manual-${{ matrix.enable_susfs }}
+          name: kernel-clang23-manual-${{ matrix.enable_susfs }}
           path: output_artifacts/*
 
       - name: Save Ccache Data
@@ -421,7 +426,7 @@ jobs:
           key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
 
   build_lsm:
-    name: LSM Hook (Clang, SUSFS=${{ matrix.enable_susfs }})
+    name: LSM Hook (Clang 23, SUSFS=${{ matrix.enable_susfs }})
     if: github.event.inputs.hook_mode == 'all' || github.event.inputs.hook_mode == 'lsm' || github.event.inputs.hook_mode == 'branch_link'
     needs: matrix_prep
     runs-on: ubuntu-24.04
@@ -437,7 +442,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            bc bison ca-certificates ccache cpio curl flex \
+            aria2 bc bison ca-certificates ccache cpio curl flex \
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
             binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi \
             git jq libelf-dev libssl-dev make python3 zip xz-utils patch
@@ -448,12 +453,12 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-libra-lsm-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-${{ github.run_id }}
+          key: ccache-libra-clang23-lsm-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-${{ github.run_id }}
           restore-keys: |
-            ccache-libra-lsm-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-
-            ccache-libra-lsm-${{ matrix.enable_susfs }}-
-            ccache-libra-lsm-
-            ccache-libra-
+            ccache-libra-clang23-lsm-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-
+            ccache-libra-clang23-lsm-${{ matrix.enable_susfs }}-
+            ccache-libra-clang23-lsm-
+            ccache-libra-clang23-
 
       - name: Setup Ccache Configurations & Wrappers
         if: github.event.inputs.use_ccache != 'false'
@@ -494,24 +499,18 @@ jobs:
           echo "CCACHE_NOHASHDIR=true" >> $GITHUB_ENV
           echo "CCACHE_TEMPDIR=/dev/shm/ccache-temp" >> $GITHUB_ENV
 
-      - name: Fetch Toolchain (Greenforce Clang)
+      - name: Fetch Toolchain (ZyCromerZ Clang 23)
         run: |
           mkdir -p "$GITHUB_WORKSPACE/toolchain"
           cd "$GITHUB_WORKSPACE/toolchain"
-          TAG="${{ inputs.clang_tag || '20261024' }}"
-          DOWNLOAD_URL=$(curl -s "https://api.github.com/repos/greenforce-project/greenforce_clang/releases/tags/$TAG" \
-            | jq -r '.assets[] | select(.name | test("gf-clang.*\\.tar\\.gz$")) | .browser_download_url' | head -n 1)
-
-          if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
-            echo "Specified tag not found, falling back to latest Greenforce Clang release"
-            DOWNLOAD_URL=$(curl -s "https://api.github.com/repos/greenforce-project/greenforce_clang/releases/latest" \
-              | jq -r '.assets[] | select(.name | test("gf-clang.*\\.tar\\.gz$")) | .browser_download_url' | head -n 1)
-          fi
-
-          echo "Downloading Clang from: $DOWNLOAD_URL"
-          curl -L "$DOWNLOAD_URL" -o clang.tar.gz
+          CLANG_URL="${{ inputs.clang_url || 'https://github.com/ZyCromerZ/Clang/releases/download/23.0.0git-20260130-release/Clang-23.0.0git-20260130.tar.gz' }}"
+          echo "⚡ Downloading Clang from: $CLANG_URL"
+          aria2c -s 16 -x 16 -k 1M "$CLANG_URL" -o clang.tar.gz || curl -fL "$CLANG_URL" -o clang.tar.gz
           tar -xzf clang.tar.gz
           rm clang.tar.gz
+          echo "$GITHUB_WORKSPACE/toolchain/bin" >> "$GITHUB_PATH"
+          echo "Installed Clang version:"
+          "$GITHUB_WORKSPACE/toolchain/bin/clang" --version | head -n1
 
       - name: Checkout Kernel Source
         uses: actions/checkout@v7.0.1
@@ -598,7 +597,7 @@ jobs:
           K_VER="${{ needs.matrix_prep.outputs.ksu_ver }}"
           SUSFS_VER="${{ needs.matrix_prep.outputs.susfs_ver }}"
 
-          RAW_TOOLCHAIN_STR=$(clang --version 2>&1 | head -n1)
+          RAW_TOOLCHAIN_STR=$("$GITHUB_WORKSPACE/toolchain/bin/clang" --version 2>&1 | head -n1)
           TOOLCHAIN_DISPLAY="$RAW_TOOLCHAIN_STR"
 
           echo "ksu_ver=$K_VER" >> "$GITHUB_OUTPUT"
@@ -621,6 +620,9 @@ jobs:
           export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
           if [ "${{ github.event.inputs.use_ccache }}" != "false" ]; then
             export PATH="${{ github.workspace }}/.ccache-bin:$PATH"
+            CCACHE_PREFIX="ccache "
+          else
+            CCACHE_PREFIX=""
           fi
           export ARCH=arm64
           export SUBARCH=arm64
@@ -630,10 +632,16 @@ jobs:
 
           mkdir -p out
           ARCH=arm64 scripts/kconfig/merge_config.sh -O out arch/arm64/configs/libra_defconfig
+          scripts/config --file out/.config -e KSU_HACK_ARM64_BRANCH_LINK
+          scripts/config --file out/.config -e KSU_LSM_SECURITY_HOOKS
           scripts/config --file out/.config -d CC_WERROR
 
+          if [ "${{ matrix.enable_susfs }}" != "true" ]; then
+            scripts/config --file out/.config -d CONFIG_KSU_SUSFS
+          fi
+
           make -j$(nproc) ARCH=arm64 SUBARCH=arm64 O=out \
-            CC="clang" \
+            CC="${CCACHE_PREFIX}clang" \
             AR="llvm-ar" \
             NM="llvm-nm" \
             LD="ld.lld" \
@@ -641,9 +649,9 @@ jobs:
             OBJDUMP="llvm-objdump" \
             STRIP="llvm-strip" \
             CLANG_TRIPLE="aarch64-linux-gnu-" \
-            CROSS_COMPILE="aarch64-linux-gnu-" \
-            CROSS_COMPILE_ARM32="arm-linux-gnueabi-" \
-            CROSS_COMPILE_COMPAT="arm-linux-gnueabi-" \
+            CROSS_COMPILE="${CCACHE_PREFIX}aarch64-linux-gnu-" \
+            CROSS_COMPILE_ARM32="${CCACHE_PREFIX}arm-linux-gnueabi-" \
+            CROSS_COMPILE_COMPAT="${CCACHE_PREFIX}arm-linux-gnueabi-" \
             LLVM=1 \
             LLVM_IAS=1 \
             INSTALL_MOD_STRIP=1 \
@@ -676,23 +684,25 @@ jobs:
           SUSFS_VER="${{ steps.meta.outputs.susfs_ver }}"
           DATE=$(date +%y%m%d)
 
+          sed -i -E "s/kernel\.compiler=.*/kernel.compiler=ZyCromerZ-Clang-23/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
+
           if [ "${{ matrix.enable_susfs }}" = "true" ] && [ -n "$SUSFS_VER" ]; then
-            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (lsm, SuSFS ${SUSFS_VER})/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-            ZIP_NAME="KSU_SUSFS_${SUSFS_VER}_libra_3.10.108+${KSU_VER}-lsm-${DATE}.zip"
+            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (lsm, clang23, SuSFS ${SUSFS_VER})/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
+            ZIP_NAME="KSU_SUSFS_${SUSFS_VER}_libra_3.10.108+${KSU_VER}-lsm-clang23-${DATE}.zip"
           else
-            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (lsm)/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-            ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-lsm-${DATE}.zip"
+            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (lsm, clang23)/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
+            ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-lsm-clang23-${DATE}.zip"
           fi
 
           mkdir -p "$GITHUB_WORKSPACE/output_artifacts"
           cd "$GITHUB_WORKSPACE/AnyKernel3"
           zip -r9 "$GITHUB_WORKSPACE/output_artifacts/$ZIP_NAME" * -x .git .gitignore README.md *placeholder
 
-          echo "KERNEL_VER='3.10.108'" > "$GITHUB_WORKSPACE/output_artifacts/build_metadata.env"
-          echo "KSU_VER='${KSU_VER}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata.env"
-          echo "TOOLCHAIN_DISPLAY='${{ steps.meta.outputs.toolchain_display }}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata.env"
+          echo "KERNEL_VER='3.10.108'" > "$GITHUB_WORKSPACE/output_artifacts/build_metadata_clang23_lsm_${{ matrix.enable_susfs }}.env"
+          echo "KSU_VER='${KSU_VER}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_clang23_lsm_${{ matrix.enable_susfs }}.env"
+          echo "TOOLCHAIN_DISPLAY='${{ steps.meta.outputs.toolchain_display }}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_clang23_lsm_${{ matrix.enable_susfs }}.env"
           if [ "${{ matrix.enable_susfs }}" = "true" ] && [ -n "$SUSFS_VER" ]; then
-            echo "SUSFS_VER='${SUSFS_VER}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata.env"
+            echo "SUSFS_VER='${SUSFS_VER}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_clang23_lsm_${{ matrix.enable_susfs }}.env"
           fi
 
           echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
@@ -701,7 +711,7 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: kernel-lsm-${{ matrix.enable_susfs }}
+          name: kernel-clang23-lsm-${{ matrix.enable_susfs }}
           path: output_artifacts/*
 
       - name: Save Ccache Data
@@ -753,10 +763,10 @@ jobs:
             exit 1
           fi
 
-          if [ -f "./all_artifacts/build_metadata.env" ]; then
-            eval "$(grep -E '^(KERNEL_VER|KSU_VER|TOOLCHAIN_DISPLAY|SUSFS_VER)=' ./all_artifacts/build_metadata.env 2>/dev/null || true)"
+          if [ -f "./all_artifacts/build_metadata*.env" ]; then
+            eval "$(grep -E '^(KERNEL_VER|KSU_VER|TOOLCHAIN_DISPLAY|SUSFS_VER)=' ./all_artifacts/build_metadata*.env 2>/dev/null | head -n4 || true)"
           fi
-          TOOLCHAIN_DISPLAY="${TOOLCHAIN_DISPLAY:-Greenforce Clang}"
+          TOOLCHAIN_DISPLAY="${TOOLCHAIN_DISPLAY:-ZyCromerZ Clang 23}"
           KERNEL_VER="${KERNEL_VER:-3.10.108}"
           KSU_VER="${KSU_VER:-${{ needs.matrix_prep.outputs.ksu_ver }}}"
           SUSFS_VER="${SUSFS_VER:-${{ needs.matrix_prep.outputs.susfs_ver }}}"
@@ -775,7 +785,7 @@ jobs:
             echo "| **Kernel Base** | \`$KERNEL_REPO\` (branch: \`${BRANCH}\`) |"
             echo "| **KernelSU** | \`$KSU_BRANCH\` (\`$KSU_VER\`) |"
             echo "| **SuSFS** | \`$SUSFS_VER\` |"
-            echo "| **Compiler** | \`$TOOLCHAIN_DISPLAY\` |"
+            echo "| **Toolchain** | \`$TOOLCHAIN_DISPLAY\` |"
             echo "| **Build Date** | $BUILD_TIME |"
             echo ""
             echo "### 📦 Released Packages"
