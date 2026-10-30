@@ -21,10 +21,15 @@ on:
         required: true
         type: choice
         options:
+          - 'all'
           - 'manual'
           - 'branch_link'
-          - 'all'
-        default: 'manual'
+        default: 'all'
+      xxksu_source:
+        description: 'xxksu (KernelSU) source: "latest" (fetch latest backslashxx/KernelSU), "builtin" (tree version), or branch/tag'
+        required: true
+        default: 'latest'
+        type: string
       enable_susfs:
         description: 'SuSFS Integration'
         required: true
@@ -118,6 +123,26 @@ jobs:
           ref: ${{ inputs.kernel_branch || 'personal' }}
           path: kernel
           fetch-depth: 1
+
+      - name: Setup xxksu (KernelSU)
+        run: |
+          KSU_SRC="${{ inputs.xxksu_source || 'latest' }}"
+          echo "Configured xxksu source: $KSU_SRC"
+          if [ "$KSU_SRC" = "builtin" ]; then
+            echo "Using builtin drivers/kernelsu from kernel tree."
+          else
+            echo "Fetching xxksu from backslashxx/KernelSU ($KSU_SRC)..."
+            rm -rf "$GITHUB_WORKSPACE/xxksu" "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
+            if [ "$KSU_SRC" = "latest" ]; then
+              git clone --depth 1 https://github.com/backslashxx/KernelSU.git "$GITHUB_WORKSPACE/xxksu"
+            else
+              git clone --depth 1 -b "$KSU_SRC" https://github.com/backslashxx/KernelSU.git "$GITHUB_WORKSPACE/xxksu"
+            fi
+            KSU_COMMIT=$(git -C "$GITHUB_WORKSPACE/xxksu" rev-parse --short HEAD 2>/dev/null || echo "")
+            echo "xxksu commit: $KSU_COMMIT"
+            cp -r "$GITHUB_WORKSPACE/xxksu/kernel" "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
+            echo "Successfully installed xxksu into drivers/kernelsu"
+          fi
 
       - name: Apply Manual Hook Patches
         run: |
@@ -302,6 +327,26 @@ jobs:
           path: kernel
           fetch-depth: 1
 
+      - name: Setup xxksu (KernelSU)
+        run: |
+          KSU_SRC="${{ inputs.xxksu_source || 'latest' }}"
+          echo "Configured xxksu source: $KSU_SRC"
+          if [ "$KSU_SRC" = "builtin" ]; then
+            echo "Using builtin drivers/kernelsu from kernel tree."
+          else
+            echo "Fetching xxksu from backslashxx/KernelSU ($KSU_SRC)..."
+            rm -rf "$GITHUB_WORKSPACE/xxksu" "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
+            if [ "$KSU_SRC" = "latest" ]; then
+              git clone --depth 1 https://github.com/backslashxx/KernelSU.git "$GITHUB_WORKSPACE/xxksu"
+            else
+              git clone --depth 1 -b "$KSU_SRC" https://github.com/backslashxx/KernelSU.git "$GITHUB_WORKSPACE/xxksu"
+            fi
+            KSU_COMMIT=$(git -C "$GITHUB_WORKSPACE/xxksu" rev-parse --short HEAD 2>/dev/null || echo "")
+            echo "xxksu commit: $KSU_COMMIT"
+            cp -r "$GITHUB_WORKSPACE/xxksu/kernel" "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
+            echo "Successfully installed xxksu into drivers/kernelsu"
+          fi
+
       - name: Apply SuSFS v2.3.0 Patches
         if: matrix.enable_susfs == 'true'
         run: |
@@ -470,6 +515,7 @@ jobs:
           printf "## Xiaomi Mi 4c (libra) Kernel Build\n" > release_body.md
           printf -- "- **Kernel Repository**: \`%s\`\n" "${{ github.event.inputs.kernel_repo || 'ximi-libra/android_kernel_xiaomi_libra' }}" >> release_body.md
           printf -- "- **Kernel Branch**: \`%s\`\n" "$BRANCH" >> release_body.md
+          printf -- "- **xxksu Source**: \`%s\`\n" "${{ github.event.inputs.xxksu_source || 'latest' }}" >> release_body.md
           printf -- "- **Build Date**: \`%s\`\n\n" "$DATE" >> release_body.md
           printf "### Released Packages\n" >> release_body.md
 
