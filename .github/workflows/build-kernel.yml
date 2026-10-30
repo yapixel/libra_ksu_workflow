@@ -173,10 +173,12 @@ jobs:
           if [ ! -d "$GCC64_DIR/bin" ]; then
             ARCHIVE64="gcc-linaro-4.9.4-2017.01-x86_64_aarch64-linux-gnu.tar.xz"
             echo "⚡ Downloading Linaro GCC 4.9.4 64-bit..."
-            URL1="https://dl.armbian.com/_toolchains/${ARCHIVE64}"
-            URL2="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/_toolchain/${ARCHIVE64}"
-            URL3="https://mirrors.nju.edu.cn/armbian-releases/_toolchain/${ARCHIVE64}"
-            aria2c -s 16 -x 16 -k 1M "$URL1" "$URL2" "$URL3" -o gcc64.tar.xz || curl -fL "$URL1" -o gcc64.tar.xz
+            URL_GH="https://github.com/yapixel/gki-build-assets/releases/download/gcc-linaro-4.9.4/${ARCHIVE64}"
+            URL_DOTSRC="https://mirrors.dotsrc.org/armbian-dl/_toolchain/${ARCHIVE64}"
+            URL_ARMBIAN="https://dl.armbian.com/_toolchains/${ARCHIVE64}"
+            curl -fL --retry 3 --retry-delay 2 "$URL_GH" -o gcc64.tar.xz || \
+              aria2c -s 16 -x 16 -k 1M "$URL_DOTSRC" "$URL_ARMBIAN" -o gcc64.tar.xz || \
+              curl -fL "$URL_DOTSRC" -o gcc64.tar.xz
             tar -xf gcc64.tar.xz -C "$GITHUB_WORKSPACE/toolchains"
             rm -f gcc64.tar.xz
           fi
@@ -184,10 +186,12 @@ jobs:
           if [ ! -d "$GCC32_DIR/bin" ]; then
             ARCHIVE32="gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabihf.tar.xz"
             echo "⚡ Downloading Linaro GCC 4.9.4 32-bit..."
-            URL1="https://dl.armbian.com/_toolchains/${ARCHIVE32}"
-            URL2="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/_toolchain/${ARCHIVE32}"
-            URL3="https://mirrors.nju.edu.cn/armbian-releases/_toolchain/${ARCHIVE32}"
-            aria2c -s 16 -x 16 -k 1M "$URL1" "$URL2" "$URL3" -o gcc32.tar.xz || curl -fL "$URL1" -o gcc32.tar.xz
+            URL_GH="https://github.com/yapixel/gki-build-assets/releases/download/gcc-linaro-4.9.4/${ARCHIVE32}"
+            URL_DOTSRC="https://mirrors.dotsrc.org/armbian-dl/_toolchain/${ARCHIVE32}"
+            URL_ARMBIAN="https://dl.armbian.com/_toolchains/${ARCHIVE32}"
+            curl -fL --retry 3 --retry-delay 2 "$URL_GH" -o gcc32.tar.xz || \
+              aria2c -s 16 -x 16 -k 1M "$URL_DOTSRC" "$URL_ARMBIAN" -o gcc32.tar.xz || \
+              curl -fL "$URL_DOTSRC" -o gcc32.tar.xz
             tar -xf gcc32.tar.xz -C "$GITHUB_WORKSPACE/toolchains"
             rm -f gcc32.tar.xz
           fi
@@ -473,10 +477,12 @@ jobs:
           if [ ! -d "$GCC64_DIR/bin" ]; then
             ARCHIVE64="gcc-linaro-4.9.4-2017.01-x86_64_aarch64-linux-gnu.tar.xz"
             echo "⚡ Downloading Linaro GCC 4.9.4 64-bit..."
-            URL1="https://dl.armbian.com/_toolchains/${ARCHIVE64}"
-            URL2="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/_toolchain/${ARCHIVE64}"
-            URL3="https://mirrors.nju.edu.cn/armbian-releases/_toolchain/${ARCHIVE64}"
-            aria2c -s 16 -x 16 -k 1M "$URL1" "$URL2" "$URL3" -o gcc64.tar.xz || curl -fL "$URL1" -o gcc64.tar.xz
+            URL_GH="https://github.com/yapixel/gki-build-assets/releases/download/gcc-linaro-4.9.4/${ARCHIVE64}"
+            URL_DOTSRC="https://mirrors.dotsrc.org/armbian-dl/_toolchain/${ARCHIVE64}"
+            URL_ARMBIAN="https://dl.armbian.com/_toolchains/${ARCHIVE64}"
+            curl -fL --retry 3 --retry-delay 2 "$URL_GH" -o gcc64.tar.xz || \
+              aria2c -s 16 -x 16 -k 1M "$URL_DOTSRC" "$URL_ARMBIAN" -o gcc64.tar.xz || \
+              curl -fL "$URL_DOTSRC" -o gcc64.tar.xz
             tar -xf gcc64.tar.xz -C "$GITHUB_WORKSPACE/toolchains"
             rm -f gcc64.tar.xz
           fi
@@ -484,10 +490,12 @@ jobs:
           if [ ! -d "$GCC32_DIR/bin" ]; then
             ARCHIVE32="gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabihf.tar.xz"
             echo "⚡ Downloading Linaro GCC 4.9.4 32-bit..."
-            URL1="https://dl.armbian.com/_toolchains/${ARCHIVE32}"
-            URL2="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/_toolchain/${ARCHIVE32}"
-            URL3="https://mirrors.nju.edu.cn/armbian-releases/_toolchain/${ARCHIVE32}"
-            aria2c -s 16 -x 16 -k 1M "$URL1" "$URL2" "$URL3" -o gcc32.tar.xz || curl -fL "$URL1" -o gcc32.tar.xz
+            URL_GH="https://github.com/yapixel/gki-build-assets/releases/download/gcc-linaro-4.9.4/${ARCHIVE32}"
+            URL_DOTSRC="https://mirrors.dotsrc.org/armbian-dl/_toolchain/${ARCHIVE32}"
+            URL_ARMBIAN="https://dl.armbian.com/_toolchains/${ARCHIVE32}"
+            curl -fL --retry 3 --retry-delay 2 "$URL_GH" -o gcc32.tar.xz || \
+              aria2c -s 16 -x 16 -k 1M "$URL_DOTSRC" "$URL_ARMBIAN" -o gcc32.tar.xz || \
+              curl -fL "$URL_DOTSRC" -o gcc32.tar.xz
             tar -xf gcc32.tar.xz -C "$GITHUB_WORKSPACE/toolchains"
             rm -f gcc32.tar.xz
           fi
