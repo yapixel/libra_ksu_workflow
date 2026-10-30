@@ -353,9 +353,9 @@ jobs:
             OBJDUMP="llvm-objdump" \
             STRIP="llvm-strip" \
             CLANG_TRIPLE="aarch64-linux-gnu-" \
-            CROSS_COMPILE="${CCACHE_PREFIX}aarch64-linux-gnu-" \
-            CROSS_COMPILE_ARM32="${CCACHE_PREFIX}arm-linux-gnueabi-" \
-            CROSS_COMPILE_COMPAT="${CCACHE_PREFIX}arm-linux-gnueabi-" \
+            CROSS_COMPILE="aarch64-linux-gnu-" \
+            CROSS_COMPILE_ARM32="arm-linux-gnueabi-" \
+            CROSS_COMPILE_COMPAT="arm-linux-gnueabi-" \
             LLVM=1 \
             LLVM_IAS=1 \
             INSTALL_MOD_STRIP=1 \
@@ -649,9 +649,9 @@ jobs:
             OBJDUMP="llvm-objdump" \
             STRIP="llvm-strip" \
             CLANG_TRIPLE="aarch64-linux-gnu-" \
-            CROSS_COMPILE="${CCACHE_PREFIX}aarch64-linux-gnu-" \
-            CROSS_COMPILE_ARM32="${CCACHE_PREFIX}arm-linux-gnueabi-" \
-            CROSS_COMPILE_COMPAT="${CCACHE_PREFIX}arm-linux-gnueabi-" \
+            CROSS_COMPILE="aarch64-linux-gnu-" \
+            CROSS_COMPILE_ARM32="arm-linux-gnueabi-" \
+            CROSS_COMPILE_COMPAT="arm-linux-gnueabi-" \
             LLVM=1 \
             LLVM_IAS=1 \
             INSTALL_MOD_STRIP=1 \
