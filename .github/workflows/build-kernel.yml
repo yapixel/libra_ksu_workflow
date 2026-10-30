@@ -11,9 +11,10 @@ on:
       kernel_branch:
         description: 'Kernel branch to build'
         required: true
-        default: 'personal'
+        default: 'personal-susfs-2.3.0'
         type: choice
         options:
+          - 'personal-susfs-2.3.0'
           - 'personal'
           - 'susfs-3.10'
           - 'lineage-18.1-ksu'
