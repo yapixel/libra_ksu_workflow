@@ -15,37 +15,97 @@ on:
         type: choice
         options:
           - 'personal'
-          - 'personal-susfs-2.3.0'
           - 'lineage-18.1'
+      hook_mode:
+        description: 'Hook Mode to Build'
+        required: true
+        type: choice
+        options:
+          - 'manual'
+          - 'branch_link'
+          - 'all'
+        default: 'manual'
+      enable_susfs:
+        description: 'SuSFS Integration'
+        required: true
+        type: choice
+        options:
+          - 'all'
+          - 'true'
+          - 'false'
+        default: 'all'
       clang_tag:
         description: 'Greenforce Clang release tag (default: 20260531 for Clang 22)'
         required: true
         default: '20260531'
         type: string
-      upload_release:
-        description: 'Publish build as GitHub Release'
-        required: false
-        default: true
+      create_release:
+        description: 'Create GitHub Release'
+        required: true
         type: boolean
+        default: true
 
 permissions:
   contents: write
   actions: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.inputs.kernel_branch || 'personal' }}
+  cancel-in-progress: false
+
 jobs:
+  matrix_prep:
+    name: Prepare Matrix
+    runs-on: ubuntu-24.04
+    outputs:
+      build_matrix: ${{ steps.set-matrix.outputs.build_matrix }}
+    steps:
+      - name: Calculate Build Matrix
+        id: set-matrix
+        run: |
+          HOOK_INPUT="${{ github.event.inputs.hook_mode || 'manual' }}"
+          SUSFS_INPUT="${{ github.event.inputs.enable_susfs || 'all' }}"
+
+          if [ "$HOOK_INPUT" = "all" ]; then
+            HOOKS=("manual" "branch_link")
+          else
+            HOOKS=("$HOOK_INPUT")
+          fi
+
+          if [ "$SUSFS_INPUT" = "all" ]; then
+            SUSFS_LIST=("false" "true")
+          elif [ "$SUSFS_INPUT" = "true" ]; then
+            SUSFS_LIST=("true")
+          else
+            SUSFS_LIST=("false")
+          fi
+
+          MATRIX="["
+          FIRST=1
+          for h in "${HOOKS[@]}"; do
+            for s in "${SUSFS_LIST[@]}"; do
+              if [ $FIRST -eq 0 ]; then MATRIX="$MATRIX,"; fi
+              FIRST=0
+              if [ "$s" = "true" ]; then
+                NAME="${h} + SuSFS"
+              else
+                NAME="${h} (Non-SuSFS)"
+              fi
+              MATRIX="$MATRIX{\"hook\":\"$h\",\"susfs\":$s,\"name\":\"$NAME\"}"
+            done
+          done
+          MATRIX="$MATRIX]"
+          echo "build_matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "Generated build matrix: $MATRIX"
+
   build:
     name: Build (${{ matrix.name }})
+    needs: matrix_prep
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - susfs: false
-            flavor: "without-susfs"
-            name: "Non-SuSFS"
-          - susfs: true
-            flavor: "with-susfs"
-            name: "SuSFS"
+        include: ${{ fromJson(needs.matrix_prep.outputs.build_matrix) }}
     steps:
       - name: Checkout Workflow Repository
         uses: actions/checkout@v7.0.1
@@ -86,65 +146,52 @@ jobs:
           path: kernel
           fetch-depth: 1
 
-      - name: Apply KernelSU Manual Syscall Hooks & Security Hooks
+      - name: Apply Manual Hook Patches
+        if: matrix.hook == 'manual'
         run: |
           cd "$GITHUB_WORKSPACE/kernel"
-
-          if grep -q "ksu_legacy_execve_sucompat" fs/exec.c; then
-            echo "Manual syscall hooks already present, skipping 01_ksu_manual_hooks.patch"
-          else
-            echo "Applying 01_ksu_manual_hooks.patch..."
-            patch -p1 < "$GITHUB_WORKSPACE/patches/01_ksu_manual_hooks.patch"
-          fi
-
-          if grep -q "ksu_bprm_check" security/security.c; then
-            echo "Manual security hooks already present, skipping 02_ksu_manual_security_hooks.patch"
-          else
-            echo "Applying 02_ksu_manual_security_hooks.patch..."
-            patch -p1 < "$GITHUB_WORKSPACE/patches/02_ksu_manual_security_hooks.patch"
-          fi
+          set -e
+          echo "Applying manual syscall hooks (01_ksu_manual_hooks.patch)..."
+          patch -p1 < "$GITHUB_WORKSPACE/patches/01_ksu_manual_hooks.patch"
+          echo "Applying manual security hooks v2.0 (02_ksu_manual_security_hooks.patch)..."
+          patch -p1 < "$GITHUB_WORKSPACE/patches/02_ksu_manual_security_hooks.patch"
 
       - name: Apply SuSFS v2.3.0 Patches
-        if: ${{ matrix.susfs == true }}
+        if: matrix.susfs == true
         run: |
           cd "$GITHUB_WORKSPACE/kernel"
+          echo "Cloning yapixel/susfs4ksu (branch: kernel-3.10)..."
+          git clone --depth 1 -b kernel-3.10 https://github.com/yapixel/susfs4ksu.git "$GITHUB_WORKSPACE/susfs4ksu"
 
-          if [ -f "fs/susfs.c" ] && grep -q "CONFIG_KSU_SUSFS" "fs/namespace.c"; then
-            echo "SuSFS already integrated into kernel source, skipping patch step."
-          else
-            echo "Cloning yapixel/susfs4ksu (branch: kernel-3.10)..."
-            git clone --depth 1 -b kernel-3.10 https://github.com/yapixel/susfs4ksu.git "$GITHUB_WORKSPACE/susfs4ksu"
+          echo "Copying SuSFS core source files..."
+          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/fs/susfs.c" fs/
+          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/susfs.h" include/linux/
+          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/susfs_def.h" include/linux/
 
-            echo "Copying SuSFS core source files..."
-            cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/fs/susfs.c" fs/
-            cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/susfs.h" include/linux/
-            cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/susfs_def.h" include/linux/
+          echo "Applying SuSFS KernelSU patch..."
+          cd "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
+          patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
 
-            echo "Applying SuSFS KernelSU patch..."
-            cd "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
-            patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
+          echo "Applying SuSFS kernel VFS patch..."
+          cd "$GITHUB_WORKSPACE/kernel"
+          patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_kernel-3.10.patch"
 
-            echo "Applying SuSFS kernel VFS patch..."
-            cd "$GITHUB_WORKSPACE/kernel"
-            patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_kernel-3.10.patch"
+          echo "Appending SuSFS configuration to libra_defconfig..."
+          {
+            echo "CONFIG_KSU_SUSFS=y"
+            echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
+            echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
+            echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
+            echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
+            echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
+            echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
+            echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
+            echo "CONFIG_KSU_SUSFS_SUS_MAP=y"
+          } >> arch/arm64/configs/libra_defconfig
 
-            echo "Appending SuSFS configuration to libra_defconfig..."
-            {
-              echo "CONFIG_KSU_SUSFS=y"
-              echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
-              echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
-              echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
-              echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
-              echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
-              echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
-              echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
-              echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
-              echo "CONFIG_KSU_SUSFS_SUS_MAP=y"
-            } >> arch/arm64/configs/libra_defconfig
-          fi
-
-      - name: Extract KSU & SuSFS Version from Kernel Source
-        id: ksu_version
+      - name: Extract Metadata
+        id: meta
         run: |
           KSU_VER=""
           if [ -f "$GITHUB_WORKSPACE/kernel/drivers/kernelsu/Makefile" ]; then
@@ -153,14 +200,12 @@ jobs:
           if [ -z "$KSU_VER" ]; then
             KSU_VER="Custom"
           fi
-          echo "Detected integrated KSU version: $KSU_VER"
           echo "ksu_ver=$KSU_VER" >> "$GITHUB_OUTPUT"
 
           SUSFS_VER=""
           if [ "${{ matrix.susfs }}" = "true" ] && [ -f "$GITHUB_WORKSPACE/kernel/include/linux/susfs.h" ]; then
             SUSFS_VER=$(grep -oP '(?<=#define SUSFS_VERSION ")[^"]+' "$GITHUB_WORKSPACE/kernel/include/linux/susfs.h" | head -n 1 || true)
           fi
-          echo "Detected SuSFS version: $SUSFS_VER"
           echo "susfs_ver=$SUSFS_VER" >> "$GITHUB_OUTPUT"
 
       - name: Build Kernel
@@ -173,7 +218,6 @@ jobs:
           echo "Using compiler:"
           clang --version | head -n 1
 
-          # Configure out directory and defconfig
           mkdir -p out
           ARCH=arm64 scripts/kconfig/merge_config.sh -O out arch/arm64/configs/libra_defconfig
           scripts/config --file out/.config -d CC_WERROR
@@ -182,7 +226,6 @@ jobs:
             scripts/config --file out/.config -d CONFIG_KSU_SUSFS
           fi
 
-          # Build Image.gz-dtb matching author's build script
           make -j$(nproc) ARCH=arm64 SUBARCH=arm64 O=out \
             CC="clang" \
             AR="llvm-ar" \
@@ -205,33 +248,25 @@ jobs:
             exit 1
           fi
 
-      - name: Setup AnyKernel3
+      - name: Package AnyKernel3
+        id: package
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git "$GITHUB_WORKSPACE/AnyKernel3"
           rm -rf "$GITHUB_WORKSPACE/AnyKernel3/.git"
           cp "$GITHUB_WORKSPACE/anykernel.sh" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-
-          KSU_VER="${{ steps.ksu_version.outputs.ksu_ver }}"
-          SUSFS_VER="${{ steps.ksu_version.outputs.susfs_ver }}"
-          if [ "${{ matrix.susfs }}" = "true" ] && [ -n "$SUSFS_VER" ]; then
-            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (SuSFS ${SUSFS_VER})/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-          else
-            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER}/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-          fi
-
-      - name: Package AnyKernel3 Zip
-        id: package
-        run: |
           cp "$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb" "$GITHUB_WORKSPACE/AnyKernel3/"
 
-          KSU_VER="${{ steps.ksu_version.outputs.ksu_ver }}"
-          SUSFS_VER="${{ steps.ksu_version.outputs.susfs_ver }}"
+          KSU_VER="${{ steps.meta.outputs.ksu_ver }}"
+          SUSFS_VER="${{ steps.meta.outputs.susfs_ver }}"
           DATE=$(date +%y%m%d)
+          HOOK="${{ matrix.hook }}"
 
           if [ "${{ matrix.susfs }}" = "true" ] && [ -n "$SUSFS_VER" ]; then
-            ZIP_NAME="KSU_SUSFS_${SUSFS_VER}_libra_3.10.108+${KSU_VER}-${DATE}.zip"
+            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (${HOOK}, SuSFS ${SUSFS_VER})/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
+            ZIP_NAME="KSU_SUSFS_${SUSFS_VER}_libra_3.10.108+${KSU_VER}-${HOOK}-${DATE}.zip"
           else
-            ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-${DATE}.zip"
+            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (${HOOK})/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
+            ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-${HOOK}-${DATE}.zip"
           fi
 
           mkdir -p "$GITHUB_WORKSPACE/dist"
@@ -241,63 +276,64 @@ jobs:
           echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
           echo "zip_path=$GITHUB_WORKSPACE/dist/$ZIP_NAME" >> "$GITHUB_OUTPUT"
 
-      - name: Upload Kernel Artifact
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: ${{ steps.package.outputs.zip_name }}
+          name: kernel-${{ matrix.hook }}-${{ matrix.susfs }}
           path: ${{ steps.package.outputs.zip_path }}
 
-  release:
+  publish_release:
     name: Publish Release
-    needs: build
-    if: ${{ inputs.upload_release != false && inputs.upload_release != 'false' }}
+    if: always() && github.event.inputs.create_release != 'false' && needs.build.result == 'success'
+    needs: [matrix_prep, build]
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - name: Checkout Workflow Repository
         uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Download all build artifacts
         uses: actions/download-artifact@v8.0.2
         with:
-          path: artifacts
+          path: ./all_artifacts
+          pattern: kernel-*
           merge-multiple: true
+
+      - name: List Artifacts
+        run: |
+          echo "=== Collected Release Artifacts ==="
+          ls -lh ./all_artifacts
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          DATE=$(date +%y%m%d)
-          BRANCH="${{ inputs.kernel_branch || 'personal' }}"
+          DATE=$(date +"%y%m%d")
+          BRANCH="${{ github.event.inputs.kernel_branch || 'personal' }}"
           TAG_NAME="${DATE}-${{ github.run_number }}"
-          RELEASE_NAME="Libra Kernel (${BRANCH}) + KSU [Non-SuSFS & SuSFS] - ${DATE}"
+          RELEASE_NAME="Libra Kernel (${BRANCH}) + KSU - ${DATE}"
 
-          echo "Found build packages in artifacts/:"
-          ls -la artifacts/
-
-          printf "## Xiaomi Mi 4c/4s (libra/aqua) Kernel Build\n" > release_body.md
-          printf -- "- **Kernel Repository**: \`%s\`\n" "${{ inputs.kernel_repo || 'ximi-libra/android_kernel_xiaomi_libra' }}" >> release_body.md
-          printf -- "- **Kernel Branch**: \`%s\`\n" "$BRANCH" >> release_body.md
-          printf -- "- **Build Date**: \`%s\`\n" "$DATE" >> release_body.md
-          printf -- "- **Build Matrix**:\n" >> release_body.md
-          printf -- "  - **Non-SuSFS**: Clean KernelSU 32704 with manual syscall hooks (\`fs/exec.c\`, \`fs/open.c\`, \`fs/stat.c\`) and manual security hooks v2.0 (\`security/security.c\`)\n" >> release_body.md
-          printf -- "  - **SuSFS v2.3.0**: KernelSU 32704 + SuSFS v2.3.0 de-inlined engine ported from [yapixel/susfs4ksu](https://github.com/yapixel/susfs4ksu)\n\n" >> release_body.md
-          printf "### Released Packages\n" >> release_body.md
-
-          ZIP_FILES=()
-          for f in artifacts/*.zip; do
-            if [ -f "$f" ]; then
-              sha=$(sha256sum "$f" | awk '{print $1}')
-              size=$(du -h "$f" | awk '{print $1}')
-              base=$(basename "$f")
-              echo "- **\`$base\`** (${size}) - SHA256: \`$sha\`" >> release_body.md
-              ZIP_FILES+=("$f")
-            fi
-          done
-
+          ZIP_FILES=($(find ./all_artifacts -name "*.zip" -type f))
           if [ ${#ZIP_FILES[@]} -eq 0 ]; then
-            echo "Error: No zip files found to release!"
+            echo "Error: No zip files found for release!"
             exit 1
           fi
+
+          printf "## Xiaomi Mi 4c/4s (libra/aqua) Kernel Build\n" > release_body.md
+          printf -- "- **Kernel Repository**: \`%s\`\n" "${{ github.event.inputs.kernel_repo || 'ximi-libra/android_kernel_xiaomi_libra' }}" >> release_body.md
+          printf -- "- **Kernel Branch**: \`%s\`\n" "$BRANCH" >> release_body.md
+          printf -- "- **Build Date**: \`%s\`\n\n" "$DATE" >> release_body.md
+          printf "### Released Packages\n" >> release_body.md
+
+          for f in "${ZIP_FILES[@]}"; do
+            sha=$(sha256sum "$f" | awk '{print $1}')
+            size=$(du -h "$f" | awk '{print $1}')
+            base=$(basename "$f")
+            echo "- **\`$base\`** (${size}) - SHA256: \`$sha\`" >> release_body.md
+          done
 
           gh release create "$TAG_NAME" "${ZIP_FILES[@]}" \
             --title "$RELEASE_NAME" \
