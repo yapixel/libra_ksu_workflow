@@ -6,16 +6,13 @@ on:
       kernel_repo:
         description: 'Kernel source repository'
         required: true
-        default: 'ximi-libra/android_kernel_xiaomi_libra'
+        default: 'yapixel/android_kernel_xiaomi_libra'
         type: string
       kernel_branch:
         description: 'Kernel branch to build'
         required: true
-        default: 'personal'
-        type: choice
-        options:
-          - 'personal'
-          - 'lineage-18.1'
+        default: 'personal-clean'
+        type: string
       hook_mode:
         description: 'Hook Mode to Build'
         required: true
@@ -60,7 +57,7 @@ permissions:
   actions: write
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.inputs.kernel_branch || 'personal' }}-${{ github.event.inputs.ksu_branch || 'master' }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.inputs.kernel_branch || 'personal-clean' }}-${{ github.event.inputs.ksu_branch || 'master' }}
   cancel-in-progress: false
 
 env:
@@ -222,8 +219,8 @@ jobs:
       - name: Checkout Kernel Source
         uses: actions/checkout@v7.0.1
         with:
-          repository: ${{ inputs.kernel_repo || 'ximi-libra/android_kernel_xiaomi_libra' }}
-          ref: ${{ inputs.kernel_branch || 'personal' }}
+          repository: ${{ inputs.kernel_repo || 'yapixel/android_kernel_xiaomi_libra' }}
+          ref: ${{ inputs.kernel_branch || 'personal-clean' }}
           path: kernel
           fetch-depth: 1
 
@@ -243,10 +240,31 @@ jobs:
             echo "Successfully installed xxksu into drivers/kernelsu"
           fi
 
+          cd "$GITHUB_WORKSPACE/kernel"
+          # Ensure Makefile and Kconfig include drivers/kernelsu
+          if ! grep -q "CONFIG_KSU" drivers/Makefile; then
+            echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
+          fi
+          if ! grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig; then
+            sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+          fi
+
+          # Ensure base KernelSU config in libra_defconfig
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KALLSYMS
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_HOSTSREDIRECT
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_THRONE_TRACKER_ALWAYS_THREADED
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_COMPILE_AS_C23
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_HEURISTIC_IN_TREE_BUILD
+
       - name: Apply Manual Hook Patches
         run: |
           cd "$GITHUB_WORKSPACE/kernel"
           set -e
+          echo "Disabling dynamic branch-link and LSM hooks for manual mode..."
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -d KSU_HACK_ARM64_BRANCH_LINK
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -d KSU_LSM_SECURITY_HOOKS
+
           echo "Applying manual syscall hooks v2.3 (01_ksu_manual_hooks_v2.3.patch)..."
           patch -p1 < "$GITHUB_WORKSPACE/patches/01_ksu_manual_hooks_v2.3.patch"
           echo "Applying manual security hooks v2.0 (02_ksu_manual_security_hooks_v2.0.patch)..."
@@ -272,19 +290,17 @@ jobs:
           cd "$GITHUB_WORKSPACE/kernel"
           patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_kernel-3.10.patch"
 
-          echo "Appending SuSFS configuration to libra_defconfig..."
-          {
-            echo "CONFIG_KSU_SUSFS=y"
-            echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
-            echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
-            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
-            echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
-            echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
-            echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
-            echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
-            echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
-            echo "CONFIG_KSU_SUSFS_SUS_MAP=y"
-          } >> arch/arm64/configs/libra_defconfig
+          echo "Configuring SuSFS in libra_defconfig..."
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_PATH
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_MOUNT
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_KSTAT
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SPOOF_UNAME
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_ENABLE_LOG
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_OPEN_REDIRECT
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_MAP
 
       - name: Metadata
         id: meta
@@ -499,8 +515,8 @@ jobs:
       - name: Checkout Kernel Source
         uses: actions/checkout@v7.0.1
         with:
-          repository: ${{ inputs.kernel_repo || 'ximi-libra/android_kernel_xiaomi_libra' }}
-          ref: ${{ inputs.kernel_branch || 'personal' }}
+          repository: ${{ inputs.kernel_repo || 'yapixel/android_kernel_xiaomi_libra' }}
+          ref: ${{ inputs.kernel_branch || 'personal-clean' }}
           path: kernel
           fetch-depth: 1
 
@@ -519,6 +535,28 @@ jobs:
             cp -r "$GITHUB_WORKSPACE/xxksu/kernel" "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
             echo "Successfully installed xxksu into drivers/kernelsu"
           fi
+
+          cd "$GITHUB_WORKSPACE/kernel"
+          # Ensure Makefile and Kconfig include drivers/kernelsu
+          if ! grep -q "CONFIG_KSU" drivers/Makefile; then
+            echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
+          fi
+          if ! grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig; then
+            sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+          fi
+
+          # Ensure base KernelSU config in libra_defconfig
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KALLSYMS
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_HOSTSREDIRECT
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_THRONE_TRACKER_ALWAYS_THREADED
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_COMPILE_AS_C23
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_HEURISTIC_IN_TREE_BUILD
+
+          # Enable dynamic branch-link and LSM hooks for LSM mode
+          echo "Enabling dynamic branch-link and LSM hooks for LSM mode..."
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_HACK_ARM64_BRANCH_LINK
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_LSM_SECURITY_HOOKS
 
       - name: Apply SuSFS v2.3.0 Patches
         if: matrix.enable_susfs == 'true'
@@ -540,19 +578,17 @@ jobs:
           cd "$GITHUB_WORKSPACE/kernel"
           patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_kernel-3.10.patch"
 
-          echo "Appending SuSFS configuration to libra_defconfig..."
-          {
-            echo "CONFIG_KSU_SUSFS=y"
-            echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
-            echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
-            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
-            echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
-            echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
-            echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
-            echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
-            echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
-            echo "CONFIG_KSU_SUSFS_SUS_MAP=y"
-          } >> arch/arm64/configs/libra_defconfig
+          echo "Configuring SuSFS in libra_defconfig..."
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_PATH
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_MOUNT
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_KSTAT
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SPOOF_UNAME
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_ENABLE_LOG
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_OPEN_REDIRECT
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_MAP
 
       - name: Metadata
         id: meta
@@ -704,7 +740,8 @@ jobs:
         run: |
           DATE=$(date +"%y%m%d")
           TAG="$DATE"
-          BRANCH="${{ github.event.inputs.kernel_branch || 'personal' }}"
+          KERNEL_REPO="${{ github.event.inputs.kernel_repo || 'yapixel/android_kernel_xiaomi_libra' }}"
+          BRANCH="${{ github.event.inputs.kernel_branch || 'personal-clean' }}"
 
           ZIP_FILES=($(find ./all_artifacts -name "*.zip" -type f))
           if [ ${#ZIP_FILES[@]} -eq 0 ]; then
@@ -731,7 +768,7 @@ jobs:
             echo "| :--- | :--- |"
             echo "| **Target Device** | Xiaomi Mi 4c (\`libra\`) |"
             echo "| **Architecture** | ARM64 (MSM8992) |"
-            echo "| **Kernel Base** | \`ximi-libra/android_kernel_xiaomi_libra\` (branch: \`${BRANCH}\`) |"
+            echo "| **Kernel Base** | \`$KERNEL_REPO\` (branch: \`${BRANCH}\`) |"
             echo "| **KernelSU** | \`$KSU_BRANCH\` (\`$KSU_VER\`) |"
             echo "| **SuSFS** | \`$SUSFS_VER\` |"
             echo "| **Compiler** | \`$TOOLCHAIN_DISPLAY\` |"
