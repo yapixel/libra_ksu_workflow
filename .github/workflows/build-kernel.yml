@@ -247,12 +247,33 @@ jobs:
         if: matrix.enable_susfs == 'true'
         run: |
           cd "$GITHUB_WORKSPACE/kernel"
-          echo "Applying SuSFS 2.3.0 Core Patches..."
-          patch -p1 < "$GITHUB_WORKSPACE/patches/susfs_2.3.0_midori.patch"
-          patch -p1 < "$GITHUB_WORKSPACE/patches/ksu_susfs_2.3.0_midori.patch"
+          echo "Cloning yapixel/susfs4ksu (branch: kernel-3.10)..."
+          git clone --depth 1 -b kernel-3.10 https://github.com/yapixel/susfs4ksu.git "$GITHUB_WORKSPACE/susfs4ksu"
 
-          echo "Enabling CONFIG_KSU_SUSFS in libra_defconfig..."
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e CONFIG_KSU_SUSFS
+          echo "Copying SuSFS core source files..."
+          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/fs/susfs.c" fs/
+          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/susfs.h" include/linux/
+          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/susfs_def.h" include/linux/
+
+          echo "Applying SuSFS KernelSU patch..."
+          cd "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
+          patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
+
+          echo "Applying SuSFS kernel VFS patch..."
+          cd "$GITHUB_WORKSPACE/kernel"
+          patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_kernel-3.10.patch"
+
+          echo "Configuring SuSFS in libra_defconfig..."
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_PATH
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_MOUNT
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_KSTAT
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SPOOF_UNAME
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_ENABLE_LOG
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_OPEN_REDIRECT
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_MAP
 
       - name: Configure Kernel Metadata & Environment
         id: meta
@@ -304,7 +325,7 @@ jobs:
           scripts/config --file out/.config -d CC_WERROR
 
           if [ "${{ matrix.enable_susfs }}" != "true" ]; then
-            scripts/config --file out/.config -d CONFIG_KSU_SUSFS
+            scripts/config --file out/.config -d KSU_SUSFS -d CONFIG_KSU_SUSFS
           fi
 
           make -j$(nproc) ARCH=arm64 SUBARCH=arm64 O=out \
@@ -505,12 +526,33 @@ jobs:
         if: matrix.enable_susfs == 'true'
         run: |
           cd "$GITHUB_WORKSPACE/kernel"
-          echo "Applying SuSFS 2.3.0 Core Patches..."
-          patch -p1 < "$GITHUB_WORKSPACE/patches/susfs_2.3.0_midori.patch"
-          patch -p1 < "$GITHUB_WORKSPACE/patches/ksu_susfs_2.3.0_midori.patch"
+          echo "Cloning yapixel/susfs4ksu (branch: kernel-3.10)..."
+          git clone --depth 1 -b kernel-3.10 https://github.com/yapixel/susfs4ksu.git "$GITHUB_WORKSPACE/susfs4ksu"
 
-          echo "Enabling CONFIG_KSU_SUSFS in libra_defconfig..."
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e CONFIG_KSU_SUSFS
+          echo "Copying SuSFS core source files..."
+          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/fs/susfs.c" fs/
+          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/susfs.h" include/linux/
+          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/susfs_def.h" include/linux/
+
+          echo "Applying SuSFS KernelSU patch..."
+          cd "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
+          patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
+
+          echo "Applying SuSFS kernel VFS patch..."
+          cd "$GITHUB_WORKSPACE/kernel"
+          patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_kernel-3.10.patch"
+
+          echo "Configuring SuSFS in libra_defconfig..."
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_PATH
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_MOUNT
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_KSTAT
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SPOOF_UNAME
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_ENABLE_LOG
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_OPEN_REDIRECT
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_MAP
 
       - name: Configure Kernel Metadata & Environment
         id: meta
@@ -562,7 +604,7 @@ jobs:
           scripts/config --file out/.config -d CC_WERROR
 
           if [ "${{ matrix.enable_susfs }}" != "true" ]; then
-            scripts/config --file out/.config -d CONFIG_KSU_SUSFS
+            scripts/config --file out/.config -d KSU_SUSFS -d CONFIG_KSU_SUSFS
           fi
 
           make -j$(nproc) ARCH=arm64 SUBARCH=arm64 O=out \
