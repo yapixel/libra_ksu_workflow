@@ -3,16 +3,6 @@ name: Build Libra Kernel
 on:
   workflow_dispatch:
     inputs:
-      toolchain:
-        description: 'Compiler Toolchain'
-        required: true
-        type: choice
-        options:
-          - 'all'
-          - 'gcc4'
-          - 'clang'
-          - 'gcc15'
-        default: 'all'
       hook_mode:
         description: 'Hook Mode to Build'
         required: true
@@ -46,16 +36,6 @@ on:
         required: true
         type: string
         default: 'master'
-      clang_url:
-        description: 'Direct Clang download URL (if toolchain includes clang)'
-        required: false
-        default: 'https://github.com/ZyCromerZ/Clang/releases/download/23.0.0git-20260130-release/Clang-23.0.0git-20260130.tar.gz'
-        type: string
-      arm_gcc_version:
-        description: 'Arm GNU Toolchain version (if toolchain includes gcc15)'
-        required: false
-        default: '15.2.rel1'
-        type: string
       use_ccache:
         description: 'Enable Ccache Acceleration'
         required: true
@@ -100,9 +80,9 @@ jobs:
         run: |
           SUSFS_INPUT="${{ github.event.inputs.enable_susfs || 'all' }}"
           if [ "$SUSFS_INPUT" = "all" ]; then
-            echo "susfs_matrix=["true", "false"]" >> "$GITHUB_OUTPUT"
+            echo "susfs_matrix=[\"true\", \"false\"]" >> "$GITHUB_OUTPUT"
           else
-            echo "susfs_matrix=["$SUSFS_INPUT"]" >> "$GITHUB_OUTPUT"
+            echo "susfs_matrix=[\"$SUSFS_INPUT\"]" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Fetch KSU & SuSFS Metadata
@@ -135,9 +115,9 @@ jobs:
           echo "   KSU Version: $K_VER"
           echo "   SuSFS Version: $SUSFS_VER"
 
-  build_clang_manual:
-    name: Manual Hook (Clang 23, SUSFS=${{ matrix.enable_susfs }})
-    if: (github.event.inputs.toolchain == 'all' || github.event.inputs.toolchain == 'clang' || github.event_name != 'workflow_dispatch') && (github.event.inputs.hook_mode == 'all' || github.event.inputs.hook_mode == 'manual' || github.event_name != 'workflow_dispatch')
+  build_manual:
+    name: Manual Hook (SUSFS=${{ matrix.enable_susfs }})
+    if: github.event.inputs.hook_mode == 'all' || github.event.inputs.hook_mode == 'manual' || github.event_name != 'workflow_dispatch'
     needs: matrix_prep
     runs-on: ubuntu-24.04
     strategy:
@@ -148,13 +128,11 @@ jobs:
       - name: Checkout Workflow Repository
         uses: actions/checkout@v7.0.1
 
-      - name: Install build dependencies
+      - name: Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             aria2 bc bison ca-certificates ccache cpio curl flex \
-            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
-            binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi \
             git jq libelf-dev libssl-dev make python3 zip xz-utils patch
 
       - name: Restore Ccache Data
@@ -163,646 +141,22 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-libra-clang23-manual-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-${{ github.run_id }}
+          key: ccache-libra-manual-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-${{ github.run_id }}
           restore-keys: |
-            ccache-libra-clang23-manual-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-
-            ccache-libra-clang23-manual-${{ matrix.enable_susfs }}-
-            ccache-libra-clang23-manual-
-            ccache-libra-clang23-
+            ccache-libra-manual-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-
+            ccache-libra-manual-${{ matrix.enable_susfs }}-
+            ccache-libra-manual-
+            ccache-libra-
 
       - name: Setup Ccache Configurations & Wrappers
         if: github.event.inputs.use_ccache != 'false'
         run: |
           mkdir -p "${{ env.CCACHE_DIR }}"
-          mkdir -p /dev/shm/ccache-temp
+          ccache --set-config=max_size=3G
+          ccache --set-config=compression=true
+          ccache --set-config=compression_level=1
+          ccache -z
 
-          CCACHE_BIN="${{ github.workspace }}/.ccache-bin"
-          mkdir -p "$CCACHE_BIN"
-          for prog in clang clang++ gcc g++; do
-            ln -sf "$(which ccache)" "$CCACHE_BIN/$prog"
-          done
-          echo "$CCACHE_BIN" >> "$GITHUB_PATH"
-
-          ccache -M 5G \
-            -o hash_dir=false \
-            -o compiler_check=content \
-            -o "sloppiness=file_macro,time_macros,include_file_mtime,include_file_ctime,pch_defines,modules,system_headers" \
-            -o depend_mode=true \
-            -o compression=true \
-            -o compression_level=1 \
-            -o keep_comments_cpp=true \
-            -o "cache_dir=${{ env.CCACHE_DIR }}" \
-            -o "base_dir=${{ github.workspace }}" \
-            -o "temporary_dir=/dev/shm/ccache-temp" \
-            -o file_clone=false \
-            -o hard_link=false \
-            -z
-
-          echo "CCACHE_DIR=${{ env.CCACHE_DIR }}" >> $GITHUB_ENV
-          echo "USE_CCACHE=1" >> $GITHUB_ENV
-          echo "CCACHE_COMPILERCHECK=content" >> $GITHUB_ENV
-          echo "CCACHE_SLOPPINESS=file_macro,time_macros,include_file_mtime,include_file_ctime,pch_defines,modules,system_headers" >> $GITHUB_ENV
-          echo "CCACHE_COMPRESS=true" >> $GITHUB_ENV
-          echo "CCACHE_COMPRESSTYPE=zstd" >> $GITHUB_ENV
-          echo "CCACHE_COMPRESSLEVEL=1" >> $GITHUB_ENV
-          echo "CCACHE_BASEDIR=${{ github.workspace }}" >> $GITHUB_ENV
-          echo "CCACHE_NOHASHDIR=true" >> $GITHUB_ENV
-          echo "CCACHE_TEMPDIR=/dev/shm/ccache-temp" >> $GITHUB_ENV
-
-      - name: Fetch Toolchain (ZyCromerZ Clang 23)
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/toolchain"
-          cd "$GITHUB_WORKSPACE/toolchain"
-          CLANG_URL="${{ inputs.clang_url || 'https://github.com/ZyCromerZ/Clang/releases/download/23.0.0git-20260130-release/Clang-23.0.0git-20260130.tar.gz' }}"
-          echo "⚡ Downloading Clang from: $CLANG_URL"
-          aria2c -s 16 -x 16 -k 1M "$CLANG_URL" -o clang.tar.gz || curl -fL "$CLANG_URL" -o clang.tar.gz
-          tar -xzf clang.tar.gz
-          rm clang.tar.gz
-          echo "$GITHUB_WORKSPACE/toolchain/bin" >> "$GITHUB_PATH"
-          echo "Installed Clang version:"
-          "$GITHUB_WORKSPACE/toolchain/bin/clang" --version | head -n1
-
-      - name: Checkout Kernel Source
-        uses: actions/checkout@v7.0.1
-        with:
-          repository: ${{ inputs.kernel_repo || 'yapixel/android_kernel_xiaomi_libra' }}
-          ref: ${{ inputs.kernel_branch || 'personal-clean' }}
-          path: kernel
-          fetch-depth: 1
-
-      - name: Setup xxksu (KernelSU)
-        run: |
-          KSU_BRANCH="${{ github.event.inputs.ksu_branch || 'master' }}"
-          echo "Configured xxksu branch: $KSU_BRANCH"
-          if [ "$KSU_BRANCH" = "builtin" ]; then
-            echo "Using builtin drivers/kernelsu from kernel tree."
-          else
-            echo "Fetching xxksu from backslashxx/KernelSU ($KSU_BRANCH)..."
-            rm -rf "$GITHUB_WORKSPACE/xxksu" "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
-            git clone --depth 1 -b "$KSU_BRANCH" https://github.com/backslashxx/KernelSU.git "$GITHUB_WORKSPACE/xxksu"
-            KSU_COMMIT=$(git -C "$GITHUB_WORKSPACE/xxksu" rev-parse --short HEAD 2>/dev/null || echo "")
-            echo "xxksu commit: $KSU_COMMIT"
-            cp -r "$GITHUB_WORKSPACE/xxksu/kernel" "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
-            echo "Successfully installed xxksu into drivers/kernelsu"
-          fi
-
-          cd "$GITHUB_WORKSPACE/kernel"
-          # Ensure Makefile and Kconfig include drivers/kernelsu
-          if ! grep -q "CONFIG_KSU" drivers/Makefile; then
-            echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
-          fi
-          if ! grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig; then
-            sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
-          fi
-
-          # Ensure base KernelSU config in libra_defconfig
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KALLSYMS
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_HOSTSREDIRECT
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_THRONE_TRACKER_ALWAYS_THREADED
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_HEURISTIC_IN_TREE_BUILD
-
-          # Disable dynamic branch-link and LSM hooks for manual mode
-          echo "Disabling dynamic branch-link and LSM hooks for manual mode..."
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -d KSU_HACK_ARM64_BRANCH_LINK
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -d KSU_LSM_SECURITY_HOOKS
-
-      - name: Apply Manual Hook Patches
-        run: |
-          cd "$GITHUB_WORKSPACE/kernel"
-          echo "Applying manual hook v2.3 (01_ksu_manual_hooks_v2.3.patch)..."
-          patch -p1 < "$GITHUB_WORKSPACE/patches/01_ksu_manual_hooks_v2.3.patch"
-
-          echo "Applying manual security hooks v2.0 (02_ksu_manual_security_hooks_v2.0.patch)..."
-          patch -p1 < "$GITHUB_WORKSPACE/patches/02_ksu_manual_security_hooks_v2.0.patch"
-
-      - name: Apply SuSFS v2.3.0 Patches
-        if: matrix.enable_susfs == 'true'
-        run: |
-          cd "$GITHUB_WORKSPACE/kernel"
-          echo "Cloning yapixel/susfs4ksu (branch: kernel-3.10)..."
-          git clone --depth 1 -b kernel-3.10 https://github.com/yapixel/susfs4ksu.git "$GITHUB_WORKSPACE/susfs4ksu"
-
-          echo "Copying SuSFS core source files..."
-          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/fs/susfs.c" fs/
-          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/susfs.h" include/linux/
-          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/susfs_def.h" include/linux/
-
-          echo "Applying SuSFS KernelSU patch..."
-          cd "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
-          patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
-
-          echo "Applying SuSFS kernel VFS patch..."
-          cd "$GITHUB_WORKSPACE/kernel"
-          patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_kernel-3.10.patch"
-
-          echo "Configuring SuSFS in libra_defconfig..."
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_PATH
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_MOUNT
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_KSTAT
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SPOOF_UNAME
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_ENABLE_LOG
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_OPEN_REDIRECT
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_MAP
-
-      - name: Metadata
-        id: meta
-        run: |
-          KSU_BRANCH="${{ github.event.inputs.ksu_branch || 'master' }}"
-          K_VER="${{ needs.matrix_prep.outputs.ksu_ver }}"
-          SUSFS_VER="${{ needs.matrix_prep.outputs.susfs_ver }}"
-
-          RAW_TOOLCHAIN_STR=$("$GITHUB_WORKSPACE/toolchain/bin/clang" --version 2>&1 | head -n1)
-          TOOLCHAIN_DISPLAY="$RAW_TOOLCHAIN_STR"
-
-          echo "ksu_ver=$K_VER" >> "$GITHUB_OUTPUT"
-          echo "toolchain_display=$TOOLCHAIN_DISPLAY" >> "$GITHUB_OUTPUT"
-          echo "kernel_ver=3.10.108" >> "$GITHUB_OUTPUT"
-          echo "susfs_ver=$SUSFS_VER" >> "$GITHUB_OUTPUT"
-
-          echo "======================================"
-          echo "🐧 Kernel Base: Linux 3.10.108 (Xiaomi Mi 4c libra)"
-          echo "🔧 KSU Branch: $KSU_BRANCH (+$K_VER)"
-          echo "🪝 Hook Mode: manual"
-          echo "🛡️ SUSFS: ${{ matrix.enable_susfs }} ($SUSFS_VER)"
-          echo "⚙️ Toolchain: $TOOLCHAIN_DISPLAY"
-          echo "⚡ Ccache: ${{ github.event.inputs.use_ccache != 'false' && 'Enabled' || 'Disabled' }}"
-          echo "======================================"
-
-      - name: Build Kernel
-        run: |
-          cd "$GITHUB_WORKSPACE/kernel"
-          export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
-          if [ "${{ github.event.inputs.use_ccache }}" != "false" ]; then
-            export PATH="${{ github.workspace }}/.ccache-bin:$PATH"
-            CCACHE_PREFIX="ccache "
-          else
-            CCACHE_PREFIX=""
-          fi
-          export ARCH=arm64
-          export SUBARCH=arm64
-
-          echo "Using compiler:"
-          clang --version | head -n 1
-
-          mkdir -p out
-          ARCH=arm64 scripts/kconfig/merge_config.sh -O out arch/arm64/configs/libra_defconfig
-          scripts/config --file out/.config -d KSU_HACK_ARM64_BRANCH_LINK
-          scripts/config --file out/.config -d KSU_LSM_SECURITY_HOOKS
-          scripts/config --file out/.config -d CC_WERROR
-
-          if [ "${{ matrix.enable_susfs }}" != "true" ]; then
-            scripts/config --file out/.config -d CONFIG_KSU_SUSFS
-          fi
-
-          make -j$(nproc) ARCH=arm64 SUBARCH=arm64 O=out \
-            CC="${CCACHE_PREFIX}clang" \
-            AR="llvm-ar" \
-            NM="llvm-nm" \
-            LD="ld.lld" \
-            OBJCOPY="llvm-objcopy" \
-            OBJDUMP="llvm-objdump" \
-            STRIP="llvm-strip" \
-            CLANG_TRIPLE="aarch64-linux-gnu-" \
-            CROSS_COMPILE="aarch64-linux-gnu-" \
-            CROSS_COMPILE_ARM32="arm-linux-gnueabi-" \
-            CROSS_COMPILE_COMPAT="arm-linux-gnueabi-" \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            INSTALL_MOD_STRIP=1 \
-            Image.gz-dtb
-
-          if [ ! -f out/arch/arm64/boot/Image.gz-dtb ]; then
-            echo "Error: Image.gz-dtb was not generated!"
-            exit 1
-          fi
-
-      - name: Ccache Performance Stats
-        if: github.event.inputs.use_ccache != 'false'
-        run: |
-          echo "=== Ccache Performance Stats (manual, SUSFS=${{ matrix.enable_susfs }}) ==="
-          ccache -s
-
-      - name: Package AnyKernel3
-        id: package
-        run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git "$GITHUB_WORKSPACE/AnyKernel3"
-          rm -rf "$GITHUB_WORKSPACE/AnyKernel3/.git"
-          # Strip unnecessary large binaries (snapshotupdater_static is for Android 10+ dynamic partitions; saving ~1.7MB)
-          rm -f "$GITHUB_WORKSPACE/AnyKernel3/tools/snapshotupdater_static"
-          rm -rf "$GITHUB_WORKSPACE/AnyKernel3/modules" "$GITHUB_WORKSPACE/AnyKernel3/patch" "$GITHUB_WORKSPACE/AnyKernel3/ramdisk"
-
-          cp "$GITHUB_WORKSPACE/anykernel.sh" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-          cp "$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb" "$GITHUB_WORKSPACE/AnyKernel3/"
-
-          KSU_VER="${{ steps.meta.outputs.ksu_ver }}"
-          SUSFS_VER="${{ steps.meta.outputs.susfs_ver }}"
-          DATE=$(date +%y%m%d)
-
-          sed -i -E "s/kernel\.compiler=.*/kernel.compiler=ZyCromerZ-Clang-23/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-
-          if [ "${{ matrix.enable_susfs }}" = "true" ] && [ -n "$SUSFS_VER" ]; then
-            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (manual, clang23, SuSFS ${SUSFS_VER})/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-            ZIP_NAME="KSU_SUSFS_${SUSFS_VER}_libra_3.10.108+${KSU_VER}-manual-clang23-${DATE}.zip"
-          else
-            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (manual, clang23)/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-            ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-manual-clang23-${DATE}.zip"
-          fi
-
-          mkdir -p "$GITHUB_WORKSPACE/output_artifacts"
-          cd "$GITHUB_WORKSPACE/AnyKernel3"
-          zip -r9 "$GITHUB_WORKSPACE/output_artifacts/$ZIP_NAME" * -x .git .gitignore README.md *placeholder
-
-          echo "KERNEL_VER='3.10.108'" > "$GITHUB_WORKSPACE/output_artifacts/build_metadata_clang23_manual_${{ matrix.enable_susfs }}.env"
-          echo "KSU_VER='${KSU_VER}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_clang23_manual_${{ matrix.enable_susfs }}.env"
-          echo "TOOLCHAIN_DISPLAY='${{ steps.meta.outputs.toolchain_display }}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_clang23_manual_${{ matrix.enable_susfs }}.env"
-          if [ "${{ matrix.enable_susfs }}" = "true" ] && [ -n "$SUSFS_VER" ]; then
-            echo "SUSFS_VER='${SUSFS_VER}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_clang23_manual_${{ matrix.enable_susfs }}.env"
-          fi
-
-          echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
-          echo "zip_path=$GITHUB_WORKSPACE/output_artifacts/$ZIP_NAME" >> "$GITHUB_OUTPUT"
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: kernel-clang23-manual-${{ matrix.enable_susfs }}
-          path: output_artifacts/*
-
-      - name: Save Ccache Data
-        if: always() && github.event.inputs.use_ccache != 'false'
-        uses: actions/cache/save@v6
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
-
-
-  build_clang_lsm:
-    name: LSM Hook (Clang 23, SUSFS=${{ matrix.enable_susfs }})
-    if: (github.event.inputs.toolchain == 'all' || github.event.inputs.toolchain == 'clang' || github.event_name != 'workflow_dispatch') && (github.event.inputs.hook_mode == 'all' || github.event.inputs.hook_mode == 'lsm' || github.event_name != 'workflow_dispatch')
-    needs: matrix_prep
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        enable_susfs: ${{ fromJson(needs.matrix_prep.outputs.susfs_matrix) }}
-    steps:
-      - name: Checkout Workflow Repository
-        uses: actions/checkout@v7.0.1
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            aria2 bc bison ca-certificates ccache cpio curl flex \
-            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
-            binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi \
-            git jq libelf-dev libssl-dev make python3 zip xz-utils patch
-
-      - name: Restore Ccache Data
-        id: ccache-restore
-        if: github.event.inputs.use_ccache != 'false'
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-libra-clang23-lsm-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-${{ github.run_id }}
-          restore-keys: |
-            ccache-libra-clang23-lsm-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-
-            ccache-libra-clang23-lsm-${{ matrix.enable_susfs }}-
-            ccache-libra-clang23-lsm-
-            ccache-libra-clang23-
-
-      - name: Setup Ccache Configurations & Wrappers
-        if: github.event.inputs.use_ccache != 'false'
-        run: |
-          mkdir -p "${{ env.CCACHE_DIR }}"
-          mkdir -p /dev/shm/ccache-temp
-
-          CCACHE_BIN="${{ github.workspace }}/.ccache-bin"
-          mkdir -p "$CCACHE_BIN"
-          for prog in clang clang++ gcc g++; do
-            ln -sf "$(which ccache)" "$CCACHE_BIN/$prog"
-          done
-          echo "$CCACHE_BIN" >> "$GITHUB_PATH"
-
-          ccache -M 5G \
-            -o hash_dir=false \
-            -o compiler_check=content \
-            -o "sloppiness=file_macro,time_macros,include_file_mtime,include_file_ctime,pch_defines,modules,system_headers" \
-            -o depend_mode=true \
-            -o compression=true \
-            -o compression_level=1 \
-            -o keep_comments_cpp=true \
-            -o "cache_dir=${{ env.CCACHE_DIR }}" \
-            -o "base_dir=${{ github.workspace }}" \
-            -o "temporary_dir=/dev/shm/ccache-temp" \
-            -o file_clone=false \
-            -o hard_link=false \
-            -z
-
-          echo "CCACHE_DIR=${{ env.CCACHE_DIR }}" >> $GITHUB_ENV
-          echo "USE_CCACHE=1" >> $GITHUB_ENV
-          echo "CCACHE_COMPILERCHECK=content" >> $GITHUB_ENV
-          echo "CCACHE_SLOPPINESS=file_macro,time_macros,include_file_mtime,include_file_ctime,pch_defines,modules,system_headers" >> $GITHUB_ENV
-          echo "CCACHE_COMPRESS=true" >> $GITHUB_ENV
-          echo "CCACHE_COMPRESSTYPE=zstd" >> $GITHUB_ENV
-          echo "CCACHE_COMPRESSLEVEL=1" >> $GITHUB_ENV
-          echo "CCACHE_BASEDIR=${{ github.workspace }}" >> $GITHUB_ENV
-          echo "CCACHE_NOHASHDIR=true" >> $GITHUB_ENV
-          echo "CCACHE_TEMPDIR=/dev/shm/ccache-temp" >> $GITHUB_ENV
-
-      - name: Fetch Toolchain (ZyCromerZ Clang 23)
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/toolchain"
-          cd "$GITHUB_WORKSPACE/toolchain"
-          CLANG_URL="${{ inputs.clang_url || 'https://github.com/ZyCromerZ/Clang/releases/download/23.0.0git-20260130-release/Clang-23.0.0git-20260130.tar.gz' }}"
-          echo "⚡ Downloading Clang from: $CLANG_URL"
-          aria2c -s 16 -x 16 -k 1M "$CLANG_URL" -o clang.tar.gz || curl -fL "$CLANG_URL" -o clang.tar.gz
-          tar -xzf clang.tar.gz
-          rm clang.tar.gz
-          echo "$GITHUB_WORKSPACE/toolchain/bin" >> "$GITHUB_PATH"
-          echo "Installed Clang version:"
-          "$GITHUB_WORKSPACE/toolchain/bin/clang" --version | head -n1
-
-      - name: Checkout Kernel Source
-        uses: actions/checkout@v7.0.1
-        with:
-          repository: ${{ inputs.kernel_repo || 'yapixel/android_kernel_xiaomi_libra' }}
-          ref: ${{ inputs.kernel_branch || 'personal-clean' }}
-          path: kernel
-          fetch-depth: 1
-
-      - name: Setup xxksu (KernelSU)
-        run: |
-          KSU_BRANCH="${{ github.event.inputs.ksu_branch || 'master' }}"
-          echo "Configured xxksu branch: $KSU_BRANCH"
-          if [ "$KSU_BRANCH" = "builtin" ]; then
-            echo "Using builtin drivers/kernelsu from kernel tree."
-          else
-            echo "Fetching xxksu from backslashxx/KernelSU ($KSU_BRANCH)..."
-            rm -rf "$GITHUB_WORKSPACE/xxksu" "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
-            git clone --depth 1 -b "$KSU_BRANCH" https://github.com/backslashxx/KernelSU.git "$GITHUB_WORKSPACE/xxksu"
-            KSU_COMMIT=$(git -C "$GITHUB_WORKSPACE/xxksu" rev-parse --short HEAD 2>/dev/null || echo "")
-            echo "xxksu commit: $KSU_COMMIT"
-            cp -r "$GITHUB_WORKSPACE/xxksu/kernel" "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
-            echo "Successfully installed xxksu into drivers/kernelsu"
-          fi
-
-          cd "$GITHUB_WORKSPACE/kernel"
-          # Ensure Makefile and Kconfig include drivers/kernelsu
-          if ! grep -q "CONFIG_KSU" drivers/Makefile; then
-            echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
-          fi
-          if ! grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig; then
-            sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
-          fi
-
-          # Ensure base KernelSU config in libra_defconfig
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KALLSYMS
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_HOSTSREDIRECT
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_THRONE_TRACKER_ALWAYS_THREADED
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_HEURISTIC_IN_TREE_BUILD
-
-          # Enable dynamic branch-link and LSM hooks for LSM mode
-          echo "Enabling dynamic branch-link and LSM hooks for LSM mode..."
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_HACK_ARM64_BRANCH_LINK
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_LSM_SECURITY_HOOKS
-
-      - name: Apply SuSFS v2.3.0 Patches
-        if: matrix.enable_susfs == 'true'
-        run: |
-          cd "$GITHUB_WORKSPACE/kernel"
-          echo "Cloning yapixel/susfs4ksu (branch: kernel-3.10)..."
-          git clone --depth 1 -b kernel-3.10 https://github.com/yapixel/susfs4ksu.git "$GITHUB_WORKSPACE/susfs4ksu"
-
-          echo "Copying SuSFS core source files..."
-          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/fs/susfs.c" fs/
-          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/susfs.h" include/linux/
-          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/susfs_def.h" include/linux/
-
-          echo "Applying SuSFS KernelSU patch..."
-          cd "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
-          patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
-
-          echo "Applying SuSFS kernel VFS patch..."
-          cd "$GITHUB_WORKSPACE/kernel"
-          patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_kernel-3.10.patch"
-
-          echo "Configuring SuSFS in libra_defconfig..."
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_PATH
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_MOUNT
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_KSTAT
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SPOOF_UNAME
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_ENABLE_LOG
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_OPEN_REDIRECT
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_MAP
-
-      - name: Metadata
-        id: meta
-        run: |
-          KSU_BRANCH="${{ github.event.inputs.ksu_branch || 'master' }}"
-          K_VER="${{ needs.matrix_prep.outputs.ksu_ver }}"
-          SUSFS_VER="${{ needs.matrix_prep.outputs.susfs_ver }}"
-
-          RAW_TOOLCHAIN_STR=$("$GITHUB_WORKSPACE/toolchain/bin/clang" --version 2>&1 | head -n1)
-          TOOLCHAIN_DISPLAY="$RAW_TOOLCHAIN_STR"
-
-          echo "ksu_ver=$K_VER" >> "$GITHUB_OUTPUT"
-          echo "toolchain_display=$TOOLCHAIN_DISPLAY" >> "$GITHUB_OUTPUT"
-          echo "kernel_ver=3.10.108" >> "$GITHUB_OUTPUT"
-          echo "susfs_ver=$SUSFS_VER" >> "$GITHUB_OUTPUT"
-
-          echo "======================================"
-          echo "🐧 Kernel Base: Linux 3.10.108 (Xiaomi Mi 4c libra)"
-          echo "🔧 KSU Branch: $KSU_BRANCH (+$K_VER)"
-          echo "🪝 Hook Mode: lsm"
-          echo "🛡️ SUSFS: ${{ matrix.enable_susfs }} ($SUSFS_VER)"
-          echo "⚙️ Toolchain: $TOOLCHAIN_DISPLAY"
-          echo "⚡ Ccache: ${{ github.event.inputs.use_ccache != 'false' && 'Enabled' || 'Disabled' }}"
-          echo "======================================"
-
-      - name: Build Kernel
-        run: |
-          cd "$GITHUB_WORKSPACE/kernel"
-          export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
-          if [ "${{ github.event.inputs.use_ccache }}" != "false" ]; then
-            export PATH="${{ github.workspace }}/.ccache-bin:$PATH"
-            CCACHE_PREFIX="ccache "
-          else
-            CCACHE_PREFIX=""
-          fi
-          export ARCH=arm64
-          export SUBARCH=arm64
-
-          echo "Using compiler:"
-          clang --version | head -n 1
-
-          mkdir -p out
-          ARCH=arm64 scripts/kconfig/merge_config.sh -O out arch/arm64/configs/libra_defconfig
-          scripts/config --file out/.config -e KSU_HACK_ARM64_BRANCH_LINK
-          scripts/config --file out/.config -e KSU_LSM_SECURITY_HOOKS
-          scripts/config --file out/.config -d CC_WERROR
-
-          if [ "${{ matrix.enable_susfs }}" != "true" ]; then
-            scripts/config --file out/.config -d CONFIG_KSU_SUSFS
-          fi
-
-          make -j$(nproc) ARCH=arm64 SUBARCH=arm64 O=out \
-            CC="${CCACHE_PREFIX}clang" \
-            AR="llvm-ar" \
-            NM="llvm-nm" \
-            LD="ld.lld" \
-            OBJCOPY="llvm-objcopy" \
-            OBJDUMP="llvm-objdump" \
-            STRIP="llvm-strip" \
-            CLANG_TRIPLE="aarch64-linux-gnu-" \
-            CROSS_COMPILE="aarch64-linux-gnu-" \
-            CROSS_COMPILE_ARM32="arm-linux-gnueabi-" \
-            CROSS_COMPILE_COMPAT="arm-linux-gnueabi-" \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            INSTALL_MOD_STRIP=1 \
-            Image.gz-dtb
-
-          if [ ! -f out/arch/arm64/boot/Image.gz-dtb ]; then
-            echo "Error: Image.gz-dtb was not generated!"
-            exit 1
-          fi
-
-      - name: Ccache Performance Stats
-        if: github.event.inputs.use_ccache != 'false'
-        run: |
-          echo "=== Ccache Performance Stats (lsm, SUSFS=${{ matrix.enable_susfs }}) ==="
-          ccache -s
-
-      - name: Package AnyKernel3
-        id: package
-        run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git "$GITHUB_WORKSPACE/AnyKernel3"
-          rm -rf "$GITHUB_WORKSPACE/AnyKernel3/.git"
-          # Strip unnecessary large binaries (snapshotupdater_static is for Android 10+ dynamic partitions; saving ~1.7MB)
-          rm -f "$GITHUB_WORKSPACE/AnyKernel3/tools/snapshotupdater_static"
-          rm -rf "$GITHUB_WORKSPACE/AnyKernel3/modules" "$GITHUB_WORKSPACE/AnyKernel3/patch" "$GITHUB_WORKSPACE/AnyKernel3/ramdisk"
-
-          cp "$GITHUB_WORKSPACE/anykernel.sh" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-          cp "$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb" "$GITHUB_WORKSPACE/AnyKernel3/"
-
-          KSU_VER="${{ steps.meta.outputs.ksu_ver }}"
-          SUSFS_VER="${{ steps.meta.outputs.susfs_ver }}"
-          DATE=$(date +%y%m%d)
-
-          sed -i -E "s/kernel\.compiler=.*/kernel.compiler=ZyCromerZ-Clang-23/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-
-          if [ "${{ matrix.enable_susfs }}" = "true" ] && [ -n "$SUSFS_VER" ]; then
-            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (lsm, clang23, SuSFS ${SUSFS_VER})/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-            ZIP_NAME="KSU_SUSFS_${SUSFS_VER}_libra_3.10.108+${KSU_VER}-lsm-clang23-${DATE}.zip"
-          else
-            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (lsm, clang23)/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-            ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-lsm-clang23-${DATE}.zip"
-          fi
-
-          mkdir -p "$GITHUB_WORKSPACE/output_artifacts"
-          cd "$GITHUB_WORKSPACE/AnyKernel3"
-          zip -r9 "$GITHUB_WORKSPACE/output_artifacts/$ZIP_NAME" * -x .git .gitignore README.md *placeholder
-
-          echo "KERNEL_VER='3.10.108'" > "$GITHUB_WORKSPACE/output_artifacts/build_metadata_clang23_lsm_${{ matrix.enable_susfs }}.env"
-          echo "KSU_VER='${KSU_VER}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_clang23_lsm_${{ matrix.enable_susfs }}.env"
-          echo "TOOLCHAIN_DISPLAY='${{ steps.meta.outputs.toolchain_display }}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_clang23_lsm_${{ matrix.enable_susfs }}.env"
-          if [ "${{ matrix.enable_susfs }}" = "true" ] && [ -n "$SUSFS_VER" ]; then
-            echo "SUSFS_VER='${SUSFS_VER}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_clang23_lsm_${{ matrix.enable_susfs }}.env"
-          fi
-
-          echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
-          echo "zip_path=$GITHUB_WORKSPACE/output_artifacts/$ZIP_NAME" >> "$GITHUB_OUTPUT"
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: kernel-clang23-lsm-${{ matrix.enable_susfs }}
-          path: output_artifacts/*
-
-      - name: Save Ccache Data
-        if: always() && github.event.inputs.use_ccache != 'false'
-        uses: actions/cache/save@v6
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
-
-
-  build_gcc4_manual:
-    name: Manual Hook (GCC 4.9, SUSFS=${{ matrix.enable_susfs }})
-    if: (github.event.inputs.toolchain == 'all' || github.event.inputs.toolchain == 'gcc4') && (github.event.inputs.hook_mode == 'all' || github.event.inputs.hook_mode == 'manual')
-    needs: matrix_prep
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        enable_susfs: ${{ fromJson(needs.matrix_prep.outputs.susfs_matrix) }}
-    steps:
-      - name: Checkout Workflow Repository
-        uses: actions/checkout@v7.0.1
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            aria2 bc bison ca-certificates ccache cpio curl flex \
-            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
-            binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi \
-            git jq libelf-dev libssl-dev make python3 zip xz-utils patch
-
-      - name: Restore Ccache Data
-        id: ccache-restore
-        if: github.event.inputs.use_ccache != 'false'
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-libra-gcc4-manual-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-${{ github.run_id }}
-          restore-keys: |
-            ccache-libra-gcc4-manual-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-
-            ccache-libra-gcc4-manual-${{ matrix.enable_susfs }}-
-            ccache-libra-gcc4-manual-
-            ccache-libra-gcc4-
-
-      - name: Setup Ccache Configurations & Wrappers
-        if: github.event.inputs.use_ccache != 'false'
-        run: |
-          mkdir -p "${{ env.CCACHE_DIR }}"
-          mkdir -p /dev/shm/ccache-temp
-
-          CCACHE_BIN="${{ github.workspace }}/.ccache-bin"
-          mkdir -p "$CCACHE_BIN"
-          for prog in gcc g++ aarch64-linux-gnu-gcc arm-linux-gnueabihf-gcc; do
-            ln -sf "$(which ccache)" "$CCACHE_BIN/$prog"
-          done
-          echo "$CCACHE_BIN" >> "$GITHUB_PATH"
-
-          ccache -M 5G \
-            -o hash_dir=false \
-            -o compiler_check=content \
-            -o "sloppiness=file_macro,time_macros,include_file_mtime,include_file_ctime,pch_defines,modules,system_headers" \
-            -o depend_mode=true \
-            -o compression=true \
-            -o compression_level=1 \
-            -o keep_comments_cpp=true \
-            -o "cache_dir=${{ env.CCACHE_DIR }}" \
-            -o "base_dir=${{ github.workspace }}" \
-            -o "temporary_dir=/dev/shm/ccache-temp" \
-            -o file_clone=false \
-            -o hard_link=false \
-            -z
-
-          echo "CCACHE_DIR=${{ env.CCACHE_DIR }}" >> $GITHUB_ENV
-          echo "USE_CCACHE=1" >> $GITHUB_ENV
-          echo "CCACHE_COMPILERCHECK=content" >> $GITHUB_ENV
-          echo "CCACHE_SLOPPINESS=file_macro,time_macros,include_file_mtime,include_file_ctime,pch_defines,modules,system_headers" >> $GITHUB_ENV
           echo "CCACHE_COMPRESS=true" >> $GITHUB_ENV
           echo "CCACHE_COMPRESSTYPE=zstd" >> $GITHUB_ENV
           echo "CCACHE_COMPRESSLEVEL=1" >> $GITHUB_ENV
@@ -854,36 +208,25 @@ jobs:
       - name: Setup xxksu (KernelSU)
         run: |
           KSU_BRANCH="${{ github.event.inputs.ksu_branch || 'master' }}"
-          echo "Configured xxksu branch: $KSU_BRANCH"
-          if [ "$KSU_BRANCH" = "builtin" ]; then
-            echo "Using builtin drivers/kernelsu from kernel tree."
-          else
-            echo "Fetching xxksu from backslashxx/KernelSU ($KSU_BRANCH)..."
-            rm -rf "$GITHUB_WORKSPACE/xxksu" "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
-            git clone --depth 1 -b "$KSU_BRANCH" https://github.com/backslashxx/KernelSU.git "$GITHUB_WORKSPACE/xxksu"
-            KSU_COMMIT=$(git -C "$GITHUB_WORKSPACE/xxksu" rev-parse --short HEAD 2>/dev/null || echo "")
-            echo "xxksu commit: $KSU_COMMIT"
-            cp -r "$GITHUB_WORKSPACE/xxksu/kernel" "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
-            echo "Successfully installed xxksu into drivers/kernelsu"
-          fi
-
           cd "$GITHUB_WORKSPACE/kernel"
-          # Ensure Makefile and Kconfig include drivers/kernelsu
+
+          echo "Initializing KernelSU ($KSU_BRANCH)..."
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s "$KSU_BRANCH"
+
           if ! grep -q "CONFIG_KSU" drivers/Makefile; then
             echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
           fi
-          if ! grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig; then
+
+          if ! grep -q 'source "drivers/kernelsu/Kconfig"' drivers/Kconfig; then
             sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
           fi
 
-          # Ensure base KernelSU config in libra_defconfig
           ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU
           ./scripts/config --file arch/arm64/configs/libra_defconfig -e KALLSYMS
           ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_HOSTSREDIRECT
           ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_THRONE_TRACKER_ALWAYS_THREADED
           ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_HEURISTIC_IN_TREE_BUILD
 
-          # Disable dynamic branch-link and LSM hooks for manual mode
           echo "Disabling dynamic branch-link and LSM hooks for manual mode..."
           ./scripts/config --file arch/arm64/configs/libra_defconfig -d KSU_HACK_ARM64_BRANCH_LINK
           ./scripts/config --file arch/arm64/configs/libra_defconfig -d KSU_LSM_SECURITY_HOOKS
@@ -894,73 +237,52 @@ jobs:
           echo "Applying manual hook v2.3 (01_ksu_manual_hooks_v2.3.patch)..."
           patch -p1 < "$GITHUB_WORKSPACE/patches/01_ksu_manual_hooks_v2.3.patch"
 
-          # GCC 4.9 is C89/C99/C11 and does not support Clang C23 statement attribute [[clang::always_inline]]
+          echo "Applying manual security hooks v2.0 (02_ksu_manual_security_hooks_v2.0.patch)..."
+          patch -p1 < "$GITHUB_WORKSPACE/patches/02_ksu_manual_security_hooks_v2.0.patch"
+
+          echo "Stripping [[clang::always_inline]] for GCC 4.9 C syntax compatibility..."
           sed -i 's/\[\[clang::always_inline\]\] //g' fs/exec.c fs/open.c fs/stat.c
 
-          echo "Applying manual security hooks v2.0 (02_ksu_manual_security_hooks_v2.0.patch)..."
-          patch -p1 < "$GITHUB_WORKSPACE/patches/02_ksu_manual_security_hooks_v2.0.patch"
-
       - name: Apply SuSFS v2.3.0 Patches
         if: matrix.enable_susfs == 'true'
         run: |
           cd "$GITHUB_WORKSPACE/kernel"
-          echo "Cloning yapixel/susfs4ksu (branch: kernel-3.10)..."
-          git clone --depth 1 -b kernel-3.10 https://github.com/yapixel/susfs4ksu.git "$GITHUB_WORKSPACE/susfs4ksu"
+          echo "Applying SuSFS 2.3.0 Core Patches..."
+          patch -p1 < "$GITHUB_WORKSPACE/patches/susfs_2.3.0_midori.patch"
+          patch -p1 < "$GITHUB_WORKSPACE/patches/ksu_susfs_2.3.0_midori.patch"
 
-          echo "Copying SuSFS core source files..."
-          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/fs/susfs.c" fs/
-          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/susfs.h" include/linux/
-          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/susfs_def.h" include/linux/
+          echo "Enabling CONFIG_KSU_SUSFS in libra_defconfig..."
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e CONFIG_KSU_SUSFS
 
-          echo "Applying SuSFS KernelSU patch..."
-          cd "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
-          patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
-
-          echo "Applying SuSFS kernel VFS patch..."
-          cd "$GITHUB_WORKSPACE/kernel"
-          patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_kernel-3.10.patch"
-
-          echo "Configuring SuSFS in libra_defconfig..."
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_PATH
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_MOUNT
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_KSTAT
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SPOOF_UNAME
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_ENABLE_LOG
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_OPEN_REDIRECT
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_MAP
-
-      - name: Metadata
+      - name: Configure Kernel Metadata & Environment
         id: meta
         run: |
-          KSU_BRANCH="${{ github.event.inputs.ksu_branch || 'master' }}"
+          cd "$GITHUB_WORKSPACE/kernel"
           K_VER="${{ needs.matrix_prep.outputs.ksu_ver }}"
           SUSFS_VER="${{ needs.matrix_prep.outputs.susfs_ver }}"
 
           RAW_TOOLCHAIN_STR=$(aarch64-linux-gnu-gcc --version 2>&1 | head -n1)
-          TOOLCHAIN_DISPLAY="$RAW_TOOLCHAIN_STR"
-
+          echo "toolchain_display=$RAW_TOOLCHAIN_STR" >> "$GITHUB_OUTPUT"
           echo "ksu_ver=$K_VER" >> "$GITHUB_OUTPUT"
-          echo "toolchain_display=$TOOLCHAIN_DISPLAY" >> "$GITHUB_OUTPUT"
-          echo "kernel_ver=3.10.108" >> "$GITHUB_OUTPUT"
           echo "susfs_ver=$SUSFS_VER" >> "$GITHUB_OUTPUT"
 
           echo "======================================"
-          echo "🐧 Kernel Base: Linux 3.10.108 (Xiaomi Mi 4c libra)"
+          echo "🔨 Target: Xiaomi Mi 4c (libra)"
           echo "🔧 KSU Branch: $KSU_BRANCH (+$K_VER)"
           echo "🪝 Hook Mode: manual"
           echo "🛡️ SUSFS: ${{ matrix.enable_susfs }} ($SUSFS_VER)"
-          echo "⚙️ Toolchain: $TOOLCHAIN_DISPLAY"
+          echo "⚙️ Toolchain: $RAW_TOOLCHAIN_STR"
           echo "⚡ Ccache: ${{ github.event.inputs.use_ccache != 'false' && 'Enabled' || 'Disabled' }}"
           echo "======================================"
 
       - name: Build Kernel
         run: |
           cd "$GITHUB_WORKSPACE/kernel"
+          GCC64_DIR="$GITHUB_WORKSPACE/toolchains/gcc-linaro-4.9.4-2017.01-x86_64_aarch64-linux-gnu"
+          GCC32_DIR="$GITHUB_WORKSPACE/toolchains/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabihf"
+          export PATH="$GCC64_DIR/bin:$GCC32_DIR/bin:$PATH"
+
           if [ "${{ github.event.inputs.use_ccache }}" != "false" ]; then
-            export PATH="${{ github.workspace }}/.ccache-bin:$PATH"
             CCACHE_PREFIX="ccache "
           else
             CCACHE_PREFIX=""
@@ -968,18 +290,15 @@ jobs:
           export ARCH=arm64
           export SUBARCH=arm64
 
-          echo "Using Linaro GCC 4.9 compiler:"
+          echo "Using compiler:"
           aarch64-linux-gnu-gcc --version | head -n 1
 
           mkdir -p out
-          if [ -f libra_defconfig_append_gcc ]; then
-            echo "Merging libra_defconfig with libra_defconfig_append_gcc..."
-            ARCH=arm64 scripts/kconfig/merge_config.sh -O out arch/arm64/configs/libra_defconfig libra_defconfig_append_gcc
-          else
-            ARCH=arm64 scripts/kconfig/merge_config.sh -O out arch/arm64/configs/libra_defconfig
-            scripts/config --file out/.config -e CONFIG_LTO_NONE -d CONFIG_LTO_CLANG -d CONFIG_LTO
-          fi
-
+          ARCH=arm64 scripts/kconfig/merge_config.sh -O out arch/arm64/configs/libra_defconfig libra_defconfig_append_gcc
+          scripts/config --file out/.config -e CONFIG_LTO_NONE
+          scripts/config --file out/.config -d CONFIG_LTO_CLANG
+          scripts/config --file out/.config -d CONFIG_LTO
+          scripts/config --file out/.config -d CONFIG_THINLTO
           scripts/config --file out/.config -d KSU_HACK_ARM64_BRANCH_LINK
           scripts/config --file out/.config -d KSU_LSM_SECURITY_HOOKS
           scripts/config --file out/.config -d CC_WERROR
@@ -990,15 +309,15 @@ jobs:
 
           make -j$(nproc) ARCH=arm64 SUBARCH=arm64 O=out \
             CC="${CCACHE_PREFIX}aarch64-linux-gnu-gcc" \
-            LD="aarch64-linux-gnu-ld.bfd" \
+            LD="aarch64-linux-gnu-ld" \
             AR="aarch64-linux-gnu-ar" \
-            AS="aarch64-linux-gnu-as" \
             NM="aarch64-linux-gnu-nm" \
-            CROSS_COMPILE_ARM32="${CCACHE_PREFIX}arm-linux-gnueabihf-" \
             OBJCOPY="aarch64-linux-gnu-objcopy" \
             OBJDUMP="aarch64-linux-gnu-objdump" \
             STRIP="aarch64-linux-gnu-strip" \
             CROSS_COMPILE="${CCACHE_PREFIX}aarch64-linux-gnu-" \
+            CROSS_COMPILE_ARM32="${CCACHE_PREFIX}arm-linux-gnueabihf-" \
+            CROSS_COMPILE_COMPAT="${CCACHE_PREFIX}arm-linux-gnueabihf-" \
             INSTALL_MOD_STRIP=1 \
             Image.gz-dtb
 
@@ -1032,22 +351,22 @@ jobs:
           sed -i -E "s/kernel\.compiler=.*/kernel.compiler=gcc-linaro-4.9.4/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
 
           if [ "${{ matrix.enable_susfs }}" = "true" ] && [ -n "$SUSFS_VER" ]; then
-            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (manual, gcc4, SuSFS ${SUSFS_VER})/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-            ZIP_NAME="KSU_SUSFS_${SUSFS_VER}_libra_3.10.108+${KSU_VER}-manual-gcc4-${DATE}.zip"
+            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (manual, SuSFS ${SUSFS_VER})/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
+            ZIP_NAME="KSU_SUSFS_${SUSFS_VER}_libra_3.10.108+${KSU_VER}-manual-${DATE}.zip"
           else
-            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (manual, gcc4)/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-            ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-manual-gcc4-${DATE}.zip"
+            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (manual)/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
+            ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-manual-${DATE}.zip"
           fi
 
           mkdir -p "$GITHUB_WORKSPACE/output_artifacts"
           cd "$GITHUB_WORKSPACE/AnyKernel3"
           zip -r9 "$GITHUB_WORKSPACE/output_artifacts/$ZIP_NAME" * -x .git .gitignore README.md *placeholder
 
-          echo "KERNEL_VER='3.10.108'" > "$GITHUB_WORKSPACE/output_artifacts/build_metadata_gcc4_manual_${{ matrix.enable_susfs }}.env"
-          echo "KSU_VER='${KSU_VER}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_gcc4_manual_${{ matrix.enable_susfs }}.env"
-          echo "TOOLCHAIN_DISPLAY='${{ steps.meta.outputs.toolchain_display }}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_gcc4_manual_${{ matrix.enable_susfs }}.env"
+          echo "KERNEL_VER='3.10.108'" > "$GITHUB_WORKSPACE/output_artifacts/build_metadata_manual_${{ matrix.enable_susfs }}.env"
+          echo "KSU_VER='${KSU_VER}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_manual_${{ matrix.enable_susfs }}.env"
+          echo "TOOLCHAIN_DISPLAY='Linaro GCC 4.9.4'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_manual_${{ matrix.enable_susfs }}.env"
           if [ "${{ matrix.enable_susfs }}" = "true" ] && [ -n "$SUSFS_VER" ]; then
-            echo "SUSFS_VER='${SUSFS_VER}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_gcc4_manual_${{ matrix.enable_susfs }}.env"
+            echo "SUSFS_VER='${SUSFS_VER}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_manual_${{ matrix.enable_susfs }}.env"
           fi
 
           echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
@@ -1056,7 +375,7 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: kernel-gcc4-manual-${{ matrix.enable_susfs }}
+          name: kernel-manual-${{ matrix.enable_susfs }}
           path: output_artifacts/*
 
       - name: Save Ccache Data
@@ -1066,10 +385,9 @@ jobs:
           path: ${{ env.CCACHE_DIR }}
           key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
 
-
-  build_gcc4_lsm:
-    name: LSM Hook (GCC 4.9, SUSFS=${{ matrix.enable_susfs }})
-    if: (github.event.inputs.toolchain == 'all' || github.event.inputs.toolchain == 'gcc4') && (github.event.inputs.hook_mode == 'all' || github.event.inputs.hook_mode == 'lsm')
+  build_lsm:
+    name: LSM Hook (SUSFS=${{ matrix.enable_susfs }})
+    if: github.event.inputs.hook_mode == 'all' || github.event.inputs.hook_mode == 'lsm' || github.event_name != 'workflow_dispatch'
     needs: matrix_prep
     runs-on: ubuntu-24.04
     strategy:
@@ -1080,13 +398,11 @@ jobs:
       - name: Checkout Workflow Repository
         uses: actions/checkout@v7.0.1
 
-      - name: Install build dependencies
+      - name: Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             aria2 bc bison ca-certificates ccache cpio curl flex \
-            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
-            binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi \
             git jq libelf-dev libssl-dev make python3 zip xz-utils patch
 
       - name: Restore Ccache Data
@@ -1095,45 +411,22 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-libra-gcc4-lsm-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-${{ github.run_id }}
+          key: ccache-libra-lsm-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-${{ github.run_id }}
           restore-keys: |
-            ccache-libra-gcc4-lsm-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-
-            ccache-libra-gcc4-lsm-${{ matrix.enable_susfs }}-
-            ccache-libra-gcc4-lsm-
-            ccache-libra-gcc4-
+            ccache-libra-lsm-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-
+            ccache-libra-lsm-${{ matrix.enable_susfs }}-
+            ccache-libra-lsm-
+            ccache-libra-
 
       - name: Setup Ccache Configurations & Wrappers
         if: github.event.inputs.use_ccache != 'false'
         run: |
           mkdir -p "${{ env.CCACHE_DIR }}"
-          mkdir -p /dev/shm/ccache-temp
+          ccache --set-config=max_size=3G
+          ccache --set-config=compression=true
+          ccache --set-config=compression_level=1
+          ccache -z
 
-          CCACHE_BIN="${{ github.workspace }}/.ccache-bin"
-          mkdir -p "$CCACHE_BIN"
-          for prog in gcc g++ aarch64-linux-gnu-gcc arm-linux-gnueabihf-gcc; do
-            ln -sf "$(which ccache)" "$CCACHE_BIN/$prog"
-          done
-          echo "$CCACHE_BIN" >> "$GITHUB_PATH"
-
-          ccache -M 5G \
-            -o hash_dir=false \
-            -o compiler_check=content \
-            -o "sloppiness=file_macro,time_macros,include_file_mtime,include_file_ctime,pch_defines,modules,system_headers" \
-            -o depend_mode=true \
-            -o compression=true \
-            -o compression_level=1 \
-            -o keep_comments_cpp=true \
-            -o "cache_dir=${{ env.CCACHE_DIR }}" \
-            -o "base_dir=${{ github.workspace }}" \
-            -o "temporary_dir=/dev/shm/ccache-temp" \
-            -o file_clone=false \
-            -o hard_link=false \
-            -z
-
-          echo "CCACHE_DIR=${{ env.CCACHE_DIR }}" >> $GITHUB_ENV
-          echo "USE_CCACHE=1" >> $GITHUB_ENV
-          echo "CCACHE_COMPILERCHECK=content" >> $GITHUB_ENV
-          echo "CCACHE_SLOPPINESS=file_macro,time_macros,include_file_mtime,include_file_ctime,pch_defines,modules,system_headers" >> $GITHUB_ENV
           echo "CCACHE_COMPRESS=true" >> $GITHUB_ENV
           echo "CCACHE_COMPRESSTYPE=zstd" >> $GITHUB_ENV
           echo "CCACHE_COMPRESSLEVEL=1" >> $GITHUB_ENV
@@ -1185,36 +478,25 @@ jobs:
       - name: Setup xxksu (KernelSU)
         run: |
           KSU_BRANCH="${{ github.event.inputs.ksu_branch || 'master' }}"
-          echo "Configured xxksu branch: $KSU_BRANCH"
-          if [ "$KSU_BRANCH" = "builtin" ]; then
-            echo "Using builtin drivers/kernelsu from kernel tree."
-          else
-            echo "Fetching xxksu from backslashxx/KernelSU ($KSU_BRANCH)..."
-            rm -rf "$GITHUB_WORKSPACE/xxksu" "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
-            git clone --depth 1 -b "$KSU_BRANCH" https://github.com/backslashxx/KernelSU.git "$GITHUB_WORKSPACE/xxksu"
-            KSU_COMMIT=$(git -C "$GITHUB_WORKSPACE/xxksu" rev-parse --short HEAD 2>/dev/null || echo "")
-            echo "xxksu commit: $KSU_COMMIT"
-            cp -r "$GITHUB_WORKSPACE/xxksu/kernel" "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
-            echo "Successfully installed xxksu into drivers/kernelsu"
-          fi
-
           cd "$GITHUB_WORKSPACE/kernel"
-          # Ensure Makefile and Kconfig include drivers/kernelsu
+
+          echo "Initializing KernelSU ($KSU_BRANCH)..."
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s "$KSU_BRANCH"
+
           if ! grep -q "CONFIG_KSU" drivers/Makefile; then
             echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
           fi
-          if ! grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig; then
+
+          if ! grep -q 'source "drivers/kernelsu/Kconfig"' drivers/Kconfig; then
             sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
           fi
 
-          # Ensure base KernelSU config in libra_defconfig
           ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU
           ./scripts/config --file arch/arm64/configs/libra_defconfig -e KALLSYMS
           ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_HOSTSREDIRECT
           ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_THRONE_TRACKER_ALWAYS_THREADED
           ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_HEURISTIC_IN_TREE_BUILD
 
-          # Enable dynamic branch-link and LSM hooks for LSM mode
           echo "Enabling dynamic branch-link and LSM hooks for LSM mode..."
           ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_HACK_ARM64_BRANCH_LINK
           ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_LSM_SECURITY_HOOKS
@@ -1223,63 +505,42 @@ jobs:
         if: matrix.enable_susfs == 'true'
         run: |
           cd "$GITHUB_WORKSPACE/kernel"
-          echo "Cloning yapixel/susfs4ksu (branch: kernel-3.10)..."
-          git clone --depth 1 -b kernel-3.10 https://github.com/yapixel/susfs4ksu.git "$GITHUB_WORKSPACE/susfs4ksu"
+          echo "Applying SuSFS 2.3.0 Core Patches..."
+          patch -p1 < "$GITHUB_WORKSPACE/patches/susfs_2.3.0_midori.patch"
+          patch -p1 < "$GITHUB_WORKSPACE/patches/ksu_susfs_2.3.0_midori.patch"
 
-          echo "Copying SuSFS core source files..."
-          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/fs/susfs.c" fs/
-          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/susfs.h" include/linux/
-          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/susfs_def.h" include/linux/
+          echo "Enabling CONFIG_KSU_SUSFS in libra_defconfig..."
+          ./scripts/config --file arch/arm64/configs/libra_defconfig -e CONFIG_KSU_SUSFS
 
-          echo "Applying SuSFS KernelSU patch..."
-          cd "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
-          patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
-
-          echo "Applying SuSFS kernel VFS patch..."
-          cd "$GITHUB_WORKSPACE/kernel"
-          patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_kernel-3.10.patch"
-
-          echo "Configuring SuSFS in libra_defconfig..."
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_PATH
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_MOUNT
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_KSTAT
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SPOOF_UNAME
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_ENABLE_LOG
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_OPEN_REDIRECT
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_MAP
-
-      - name: Metadata
+      - name: Configure Kernel Metadata & Environment
         id: meta
         run: |
-          KSU_BRANCH="${{ github.event.inputs.ksu_branch || 'master' }}"
+          cd "$GITHUB_WORKSPACE/kernel"
           K_VER="${{ needs.matrix_prep.outputs.ksu_ver }}"
           SUSFS_VER="${{ needs.matrix_prep.outputs.susfs_ver }}"
 
           RAW_TOOLCHAIN_STR=$(aarch64-linux-gnu-gcc --version 2>&1 | head -n1)
-          TOOLCHAIN_DISPLAY="$RAW_TOOLCHAIN_STR"
-
+          echo "toolchain_display=$RAW_TOOLCHAIN_STR" >> "$GITHUB_OUTPUT"
           echo "ksu_ver=$K_VER" >> "$GITHUB_OUTPUT"
-          echo "toolchain_display=$TOOLCHAIN_DISPLAY" >> "$GITHUB_OUTPUT"
-          echo "kernel_ver=3.10.108" >> "$GITHUB_OUTPUT"
           echo "susfs_ver=$SUSFS_VER" >> "$GITHUB_OUTPUT"
 
           echo "======================================"
-          echo "🐧 Kernel Base: Linux 3.10.108 (Xiaomi Mi 4c libra)"
+          echo "🔨 Target: Xiaomi Mi 4c (libra)"
           echo "🔧 KSU Branch: $KSU_BRANCH (+$K_VER)"
           echo "🪝 Hook Mode: lsm"
           echo "🛡️ SUSFS: ${{ matrix.enable_susfs }} ($SUSFS_VER)"
-          echo "⚙️ Toolchain: $TOOLCHAIN_DISPLAY"
+          echo "⚙️ Toolchain: $RAW_TOOLCHAIN_STR"
           echo "⚡ Ccache: ${{ github.event.inputs.use_ccache != 'false' && 'Enabled' || 'Disabled' }}"
           echo "======================================"
 
       - name: Build Kernel
         run: |
           cd "$GITHUB_WORKSPACE/kernel"
+          GCC64_DIR="$GITHUB_WORKSPACE/toolchains/gcc-linaro-4.9.4-2017.01-x86_64_aarch64-linux-gnu"
+          GCC32_DIR="$GITHUB_WORKSPACE/toolchains/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabihf"
+          export PATH="$GCC64_DIR/bin:$GCC32_DIR/bin:$PATH"
+
           if [ "${{ github.event.inputs.use_ccache }}" != "false" ]; then
-            export PATH="${{ github.workspace }}/.ccache-bin:$PATH"
             CCACHE_PREFIX="ccache "
           else
             CCACHE_PREFIX=""
@@ -1287,18 +548,15 @@ jobs:
           export ARCH=arm64
           export SUBARCH=arm64
 
-          echo "Using Linaro GCC 4.9 compiler:"
+          echo "Using compiler:"
           aarch64-linux-gnu-gcc --version | head -n 1
 
           mkdir -p out
-          if [ -f libra_defconfig_append_gcc ]; then
-            echo "Merging libra_defconfig with libra_defconfig_append_gcc..."
-            ARCH=arm64 scripts/kconfig/merge_config.sh -O out arch/arm64/configs/libra_defconfig libra_defconfig_append_gcc
-          else
-            ARCH=arm64 scripts/kconfig/merge_config.sh -O out arch/arm64/configs/libra_defconfig
-            scripts/config --file out/.config -e CONFIG_LTO_NONE -d CONFIG_LTO_CLANG -d CONFIG_LTO
-          fi
-
+          ARCH=arm64 scripts/kconfig/merge_config.sh -O out arch/arm64/configs/libra_defconfig libra_defconfig_append_gcc
+          scripts/config --file out/.config -e CONFIG_LTO_NONE
+          scripts/config --file out/.config -d CONFIG_LTO_CLANG
+          scripts/config --file out/.config -d CONFIG_LTO
+          scripts/config --file out/.config -d CONFIG_THINLTO
           scripts/config --file out/.config -e KSU_HACK_ARM64_BRANCH_LINK
           scripts/config --file out/.config -e KSU_LSM_SECURITY_HOOKS
           scripts/config --file out/.config -d CC_WERROR
@@ -1309,15 +567,15 @@ jobs:
 
           make -j$(nproc) ARCH=arm64 SUBARCH=arm64 O=out \
             CC="${CCACHE_PREFIX}aarch64-linux-gnu-gcc" \
-            LD="aarch64-linux-gnu-ld.bfd" \
+            LD="aarch64-linux-gnu-ld" \
             AR="aarch64-linux-gnu-ar" \
-            AS="aarch64-linux-gnu-as" \
             NM="aarch64-linux-gnu-nm" \
-            CROSS_COMPILE_ARM32="${CCACHE_PREFIX}arm-linux-gnueabihf-" \
             OBJCOPY="aarch64-linux-gnu-objcopy" \
             OBJDUMP="aarch64-linux-gnu-objdump" \
             STRIP="aarch64-linux-gnu-strip" \
             CROSS_COMPILE="${CCACHE_PREFIX}aarch64-linux-gnu-" \
+            CROSS_COMPILE_ARM32="${CCACHE_PREFIX}arm-linux-gnueabihf-" \
+            CROSS_COMPILE_COMPAT="${CCACHE_PREFIX}arm-linux-gnueabihf-" \
             INSTALL_MOD_STRIP=1 \
             Image.gz-dtb
 
@@ -1351,22 +609,22 @@ jobs:
           sed -i -E "s/kernel\.compiler=.*/kernel.compiler=gcc-linaro-4.9.4/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
 
           if [ "${{ matrix.enable_susfs }}" = "true" ] && [ -n "$SUSFS_VER" ]; then
-            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (lsm, gcc4, SuSFS ${SUSFS_VER})/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-            ZIP_NAME="KSU_SUSFS_${SUSFS_VER}_libra_3.10.108+${KSU_VER}-lsm-gcc4-${DATE}.zip"
+            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (lsm, SuSFS ${SUSFS_VER})/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
+            ZIP_NAME="KSU_SUSFS_${SUSFS_VER}_libra_3.10.108+${KSU_VER}-lsm-${DATE}.zip"
           else
-            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (lsm, gcc4)/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-            ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-lsm-gcc4-${DATE}.zip"
+            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (lsm)/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
+            ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-lsm-${DATE}.zip"
           fi
 
           mkdir -p "$GITHUB_WORKSPACE/output_artifacts"
           cd "$GITHUB_WORKSPACE/AnyKernel3"
           zip -r9 "$GITHUB_WORKSPACE/output_artifacts/$ZIP_NAME" * -x .git .gitignore README.md *placeholder
 
-          echo "KERNEL_VER='3.10.108'" > "$GITHUB_WORKSPACE/output_artifacts/build_metadata_gcc4_lsm_${{ matrix.enable_susfs }}.env"
-          echo "KSU_VER='${KSU_VER}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_gcc4_lsm_${{ matrix.enable_susfs }}.env"
-          echo "TOOLCHAIN_DISPLAY='${{ steps.meta.outputs.toolchain_display }}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_gcc4_lsm_${{ matrix.enable_susfs }}.env"
+          echo "KERNEL_VER='3.10.108'" > "$GITHUB_WORKSPACE/output_artifacts/build_metadata_lsm_${{ matrix.enable_susfs }}.env"
+          echo "KSU_VER='${KSU_VER}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_lsm_${{ matrix.enable_susfs }}.env"
+          echo "TOOLCHAIN_DISPLAY='Linaro GCC 4.9.4'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_lsm_${{ matrix.enable_susfs }}.env"
           if [ "${{ matrix.enable_susfs }}" = "true" ] && [ -n "$SUSFS_VER" ]; then
-            echo "SUSFS_VER='${SUSFS_VER}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_gcc4_lsm_${{ matrix.enable_susfs }}.env"
+            echo "SUSFS_VER='${SUSFS_VER}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_lsm_${{ matrix.enable_susfs }}.env"
           fi
 
           echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
@@ -1375,7 +633,7 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: kernel-gcc4-lsm-${{ matrix.enable_susfs }}
+          name: kernel-lsm-${{ matrix.enable_susfs }}
           path: output_artifacts/*
 
       - name: Save Ccache Data
@@ -1384,665 +642,13 @@ jobs:
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
-
-
-  build_gcc15_manual:
-    name: Manual Hook (GCC 15, SUSFS=${{ matrix.enable_susfs }})
-    if: (github.event.inputs.toolchain == 'all' || github.event.inputs.toolchain == 'gcc15') && (github.event.inputs.hook_mode == 'all' || github.event.inputs.hook_mode == 'manual')
-    needs: matrix_prep
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        enable_susfs: ${{ fromJson(needs.matrix_prep.outputs.susfs_matrix) }}
-    steps:
-      - name: Checkout Workflow Repository
-        uses: actions/checkout@v7.0.1
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            aria2 bc bison ca-certificates ccache cpio curl flex \
-            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
-            binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi \
-            git jq libelf-dev libssl-dev make python3 zip xz-utils patch
-
-      - name: Restore Ccache Data
-        id: ccache-restore
-        if: github.event.inputs.use_ccache != 'false'
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-libra-gcc15-manual-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-${{ github.run_id }}
-          restore-keys: |
-            ccache-libra-gcc15-manual-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-
-            ccache-libra-gcc15-manual-${{ matrix.enable_susfs }}-
-            ccache-libra-gcc15-manual-
-            ccache-libra-gcc15-
-
-      - name: Setup Ccache Configurations & Wrappers
-        if: github.event.inputs.use_ccache != 'false'
-        run: |
-          mkdir -p "${{ env.CCACHE_DIR }}"
-          mkdir -p /dev/shm/ccache-temp
-
-          CCACHE_BIN="${{ github.workspace }}/.ccache-bin"
-          mkdir -p "$CCACHE_BIN"
-          for prog in gcc g++ aarch64-none-linux-gnu-gcc arm-none-linux-gnueabihf-gcc; do
-            ln -sf "$(which ccache)" "$CCACHE_BIN/$prog"
-          done
-          echo "$CCACHE_BIN" >> "$GITHUB_PATH"
-
-          ccache -M 5G \
-            -o hash_dir=false \
-            -o compiler_check=content \
-            -o "sloppiness=file_macro,time_macros,include_file_mtime,include_file_ctime,pch_defines,modules,system_headers" \
-            -o depend_mode=true \
-            -o compression=true \
-            -o compression_level=1 \
-            -o keep_comments_cpp=true \
-            -o "cache_dir=${{ env.CCACHE_DIR }}" \
-            -o "base_dir=${{ github.workspace }}" \
-            -o "temporary_dir=/dev/shm/ccache-temp" \
-            -o file_clone=false \
-            -o hard_link=false \
-            -z
-
-          echo "CCACHE_DIR=${{ env.CCACHE_DIR }}" >> $GITHUB_ENV
-          echo "USE_CCACHE=1" >> $GITHUB_ENV
-          echo "CCACHE_COMPILERCHECK=content" >> $GITHUB_ENV
-          echo "CCACHE_SLOPPINESS=file_macro,time_macros,include_file_mtime,include_file_ctime,pch_defines,modules,system_headers" >> $GITHUB_ENV
-          echo "CCACHE_COMPRESS=true" >> $GITHUB_ENV
-          echo "CCACHE_COMPRESSTYPE=zstd" >> $GITHUB_ENV
-          echo "CCACHE_COMPRESSLEVEL=1" >> $GITHUB_ENV
-          echo "CCACHE_BASEDIR=${{ github.workspace }}" >> $GITHUB_ENV
-          echo "CCACHE_NOHASHDIR=true" >> $GITHUB_ENV
-          echo "CCACHE_TEMPDIR=/dev/shm/ccache-temp" >> $GITHUB_ENV
-
-      - name: Fetch Toolchain (Arm GNU Toolchain GCC 15)
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/toolchains"
-          ARM_VER="${{ inputs.arm_gcc_version || '15.2.rel1' }}"
-          GCC64_DIR="$GITHUB_WORKSPACE/toolchains/arm-gnu-toolchain-${ARM_VER}-x86_64-aarch64-none-linux-gnu"
-          GCC32_DIR="$GITHUB_WORKSPACE/toolchains/arm-gnu-toolchain-${ARM_VER}-x86_64-arm-none-linux-gnueabihf"
-
-          if [ ! -d "$GCC64_DIR/bin" ]; then
-            ARCHIVE64="arm-gnu-toolchain-${ARM_VER}-x86_64-aarch64-none-linux-gnu.tar.xz"
-            echo "⚡ Downloading Arm GNU Toolchain 64-bit ${ARM_VER}..."
-            URL_GITLAB="https://gitlab.arm.com/api/v4/projects/tooling%2Fgnu-toolchains-for-arm/packages/generic/gnu-toolchain/${ARM_VER}/${ARCHIVE64}"
-            URL_DEV="https://developer.arm.com/-/media/Files/downloads/gnu/${ARM_VER}/binrel/${ARCHIVE64}"
-            aria2c -s 16 -x 16 -k 1M "$URL_GITLAB" "$URL_DEV" -o gcc64.tar.xz || curl -fL "$URL_DEV" -o gcc64.tar.xz
-            tar -xf gcc64.tar.xz -C "$GITHUB_WORKSPACE/toolchains"
-            rm -f gcc64.tar.xz
-          fi
-
-          if [ ! -d "$GCC32_DIR/bin" ]; then
-            ARCHIVE32="arm-gnu-toolchain-${ARM_VER}-x86_64-arm-none-linux-gnueabihf.tar.xz"
-            echo "⚡ Downloading Arm GNU Toolchain 32-bit ${ARM_VER}..."
-            URL_GITLAB="https://gitlab.arm.com/api/v4/projects/tooling%2Fgnu-toolchains-for-arm/packages/generic/gnu-toolchain/${ARM_VER}/${ARCHIVE32}"
-            URL_DEV="https://developer.arm.com/-/media/Files/downloads/gnu/${ARM_VER}/binrel/${ARCHIVE32}"
-            aria2c -s 16 -x 16 -k 1M "$URL_GITLAB" "$URL_DEV" -o gcc32.tar.xz || curl -fL "$URL_DEV" -o gcc32.tar.xz
-            tar -xf gcc32.tar.xz -C "$GITHUB_WORKSPACE/toolchains"
-            rm -f gcc32.tar.xz
-          fi
-
-          echo "$GCC64_DIR/bin" >> "$GITHUB_PATH"
-          echo "$GCC32_DIR/bin" >> "$GITHUB_PATH"
-          echo "Installed Arm GNU Toolchain GCC 15:"
-          "$GCC64_DIR/bin/aarch64-none-linux-gnu-gcc" --version | head -n1
-
-      - name: Checkout Kernel Source
-        uses: actions/checkout@v7.0.1
-        with:
-          repository: ${{ inputs.kernel_repo || 'yapixel/android_kernel_xiaomi_libra' }}
-          ref: ${{ inputs.kernel_branch || 'personal-clean' }}
-          path: kernel
-          fetch-depth: 1
-
-      - name: Setup xxksu (KernelSU)
-        run: |
-          KSU_BRANCH="${{ github.event.inputs.ksu_branch || 'master' }}"
-          echo "Configured xxksu branch: $KSU_BRANCH"
-          if [ "$KSU_BRANCH" = "builtin" ]; then
-            echo "Using builtin drivers/kernelsu from kernel tree."
-          else
-            echo "Fetching xxksu from backslashxx/KernelSU ($KSU_BRANCH)..."
-            rm -rf "$GITHUB_WORKSPACE/xxksu" "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
-            git clone --depth 1 -b "$KSU_BRANCH" https://github.com/backslashxx/KernelSU.git "$GITHUB_WORKSPACE/xxksu"
-            KSU_COMMIT=$(git -C "$GITHUB_WORKSPACE/xxksu" rev-parse --short HEAD 2>/dev/null || echo "")
-            echo "xxksu commit: $KSU_COMMIT"
-            cp -r "$GITHUB_WORKSPACE/xxksu/kernel" "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
-            echo "Successfully installed xxksu into drivers/kernelsu"
-          fi
-
-          cd "$GITHUB_WORKSPACE/kernel"
-          # Ensure Makefile and Kconfig include drivers/kernelsu
-          if ! grep -q "CONFIG_KSU" drivers/Makefile; then
-            echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
-          fi
-          if ! grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig; then
-            sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
-          fi
-
-          # Ensure base KernelSU config in libra_defconfig
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KALLSYMS
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_HOSTSREDIRECT
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_THRONE_TRACKER_ALWAYS_THREADED
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_HEURISTIC_IN_TREE_BUILD
-
-          # Disable dynamic branch-link and LSM hooks for manual mode
-          echo "Disabling dynamic branch-link and LSM hooks for manual mode..."
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -d KSU_HACK_ARM64_BRANCH_LINK
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -d KSU_LSM_SECURITY_HOOKS
-
-      - name: Apply Manual Hook Patches
-        run: |
-          cd "$GITHUB_WORKSPACE/kernel"
-          echo "Applying manual hook v2.3 (01_ksu_manual_hooks_v2.3.patch)..."
-          patch -p1 < "$GITHUB_WORKSPACE/patches/01_ksu_manual_hooks_v2.3.patch"
-
-          echo "Applying manual security hooks v2.0 (02_ksu_manual_security_hooks_v2.0.patch)..."
-          patch -p1 < "$GITHUB_WORKSPACE/patches/02_ksu_manual_security_hooks_v2.0.patch"
-
-      - name: Apply SuSFS v2.3.0 Patches
-        if: matrix.enable_susfs == 'true'
-        run: |
-          cd "$GITHUB_WORKSPACE/kernel"
-          echo "Cloning yapixel/susfs4ksu (branch: kernel-3.10)..."
-          git clone --depth 1 -b kernel-3.10 https://github.com/yapixel/susfs4ksu.git "$GITHUB_WORKSPACE/susfs4ksu"
-
-          echo "Copying SuSFS core source files..."
-          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/fs/susfs.c" fs/
-          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/susfs.h" include/linux/
-          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/susfs_def.h" include/linux/
-
-          echo "Applying SuSFS KernelSU patch..."
-          cd "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
-          patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
-
-          echo "Applying SuSFS kernel VFS patch..."
-          cd "$GITHUB_WORKSPACE/kernel"
-          patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_kernel-3.10.patch"
-
-          echo "Configuring SuSFS in libra_defconfig..."
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_PATH
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_MOUNT
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_KSTAT
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SPOOF_UNAME
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_ENABLE_LOG
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_OPEN_REDIRECT
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_MAP
-
-      - name: Metadata
-        id: meta
-        run: |
-          KSU_BRANCH="${{ github.event.inputs.ksu_branch || 'master' }}"
-          K_VER="${{ needs.matrix_prep.outputs.ksu_ver }}"
-          SUSFS_VER="${{ needs.matrix_prep.outputs.susfs_ver }}"
-
-          RAW_TOOLCHAIN_STR=$(aarch64-none-linux-gnu-gcc --version 2>&1 | head -n1)
-          TOOLCHAIN_DISPLAY="$RAW_TOOLCHAIN_STR"
-
-          echo "ksu_ver=$K_VER" >> "$GITHUB_OUTPUT"
-          echo "toolchain_display=$TOOLCHAIN_DISPLAY" >> "$GITHUB_OUTPUT"
-          echo "kernel_ver=3.10.108" >> "$GITHUB_OUTPUT"
-          echo "susfs_ver=$SUSFS_VER" >> "$GITHUB_OUTPUT"
-
-          echo "======================================"
-          echo "🐧 Kernel Base: Linux 3.10.108 (Xiaomi Mi 4c libra)"
-          echo "🔧 KSU Branch: $KSU_BRANCH (+$K_VER)"
-          echo "🪝 Hook Mode: manual"
-          echo "🛡️ SUSFS: ${{ matrix.enable_susfs }} ($SUSFS_VER)"
-          echo "⚙️ Toolchain: $TOOLCHAIN_DISPLAY"
-          echo "⚡ Ccache: ${{ github.event.inputs.use_ccache != 'false' && 'Enabled' || 'Disabled' }}"
-          echo "======================================"
-
-      - name: Build Kernel
-        run: |
-          cd "$GITHUB_WORKSPACE/kernel"
-          if [ "${{ github.event.inputs.use_ccache }}" != "false" ]; then
-            export PATH="${{ github.workspace }}/.ccache-bin:$PATH"
-            CCACHE_PREFIX="ccache "
-          else
-            CCACHE_PREFIX=""
-          fi
-          export ARCH=arm64
-          export SUBARCH=arm64
-
-          echo "Using GCC 15 compiler:"
-          aarch64-none-linux-gnu-gcc --version | head -n 1
-
-          mkdir -p out
-          if [ -f libra_defconfig_append_gcc ]; then
-            echo "Merging libra_defconfig with libra_defconfig_append_gcc..."
-            ARCH=arm64 scripts/kconfig/merge_config.sh -O out arch/arm64/configs/libra_defconfig libra_defconfig_append_gcc
-          else
-            ARCH=arm64 scripts/kconfig/merge_config.sh -O out arch/arm64/configs/libra_defconfig
-            scripts/config --file out/.config -e CONFIG_LTO_NONE -d CONFIG_LTO_CLANG -d CONFIG_LTO
-          fi
-
-          scripts/config --file out/.config -d KSU_HACK_ARM64_BRANCH_LINK
-          scripts/config --file out/.config -d KSU_LSM_SECURITY_HOOKS
-          scripts/config --file out/.config -d CC_WERROR
-
-          if [ "${{ matrix.enable_susfs }}" != "true" ]; then
-            scripts/config --file out/.config -d CONFIG_KSU_SUSFS
-          fi
-
-          make -j$(nproc) ARCH=arm64 SUBARCH=arm64 O=out \
-            CC="${CCACHE_PREFIX}aarch64-none-linux-gnu-gcc" \
-            LD="aarch64-none-linux-gnu-ld" \
-            AR="aarch64-none-linux-gnu-ar" \
-            AS="aarch64-none-linux-gnu-as" \
-            NM="aarch64-none-linux-gnu-nm" \
-            CROSS_COMPILE_ARM32="${CCACHE_PREFIX}arm-none-linux-gnueabihf-" \
-            OBJCOPY="aarch64-none-linux-gnu-objcopy" \
-            OBJDUMP="aarch64-none-linux-gnu-objdump" \
-            STRIP="aarch64-none-linux-gnu-strip" \
-            CROSS_COMPILE="${CCACHE_PREFIX}aarch64-none-linux-gnu-" \
-            INSTALL_MOD_STRIP=1 \
-            Image.gz-dtb
-
-          if [ ! -f out/arch/arm64/boot/Image.gz-dtb ]; then
-            echo "Error: Image.gz-dtb was not generated!"
-            exit 1
-          fi
-
-      - name: Ccache Performance Stats
-        if: github.event.inputs.use_ccache != 'false'
-        run: |
-          echo "=== Ccache Performance Stats (manual, SUSFS=${{ matrix.enable_susfs }}) ==="
-          ccache -s
-
-      - name: Package AnyKernel3
-        id: package
-        run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git "$GITHUB_WORKSPACE/AnyKernel3"
-          rm -rf "$GITHUB_WORKSPACE/AnyKernel3/.git"
-          # Strip unnecessary large binaries (snapshotupdater_static is for Android 10+ dynamic partitions; saving ~1.7MB)
-          rm -f "$GITHUB_WORKSPACE/AnyKernel3/tools/snapshotupdater_static"
-          rm -rf "$GITHUB_WORKSPACE/AnyKernel3/modules" "$GITHUB_WORKSPACE/AnyKernel3/patch" "$GITHUB_WORKSPACE/AnyKernel3/ramdisk"
-
-          cp "$GITHUB_WORKSPACE/anykernel.sh" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-          cp "$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb" "$GITHUB_WORKSPACE/AnyKernel3/"
-
-          KSU_VER="${{ steps.meta.outputs.ksu_ver }}"
-          SUSFS_VER="${{ steps.meta.outputs.susfs_ver }}"
-          ARM_VER="${{ inputs.arm_gcc_version || '15.2.rel1' }}"
-          DATE=$(date +%y%m%d)
-
-          sed -i -E "s/kernel\.compiler=.*/kernel.compiler=arm-gnu-${ARM_VER}/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-
-          if [ "${{ matrix.enable_susfs }}" = "true" ] && [ -n "$SUSFS_VER" ]; then
-            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (manual, gcc15, SuSFS ${SUSFS_VER})/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-            ZIP_NAME="KSU_SUSFS_${SUSFS_VER}_libra_3.10.108+${KSU_VER}-manual-gcc15-${DATE}.zip"
-          else
-            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (manual, gcc15)/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-            ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-manual-gcc15-${DATE}.zip"
-          fi
-
-          mkdir -p "$GITHUB_WORKSPACE/output_artifacts"
-          cd "$GITHUB_WORKSPACE/AnyKernel3"
-          zip -r9 "$GITHUB_WORKSPACE/output_artifacts/$ZIP_NAME" * -x .git .gitignore README.md *placeholder
-
-          echo "KERNEL_VER='3.10.108'" > "$GITHUB_WORKSPACE/output_artifacts/build_metadata_gcc15_manual_${{ matrix.enable_susfs }}.env"
-          echo "KSU_VER='${KSU_VER}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_gcc15_manual_${{ matrix.enable_susfs }}.env"
-          echo "TOOLCHAIN_DISPLAY='${{ steps.meta.outputs.toolchain_display }}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_gcc15_manual_${{ matrix.enable_susfs }}.env"
-          if [ "${{ matrix.enable_susfs }}" = "true" ] && [ -n "$SUSFS_VER" ]; then
-            echo "SUSFS_VER='${SUSFS_VER}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_gcc15_manual_${{ matrix.enable_susfs }}.env"
-          fi
-
-          echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
-          echo "zip_path=$GITHUB_WORKSPACE/output_artifacts/$ZIP_NAME" >> "$GITHUB_OUTPUT"
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: kernel-gcc15-manual-${{ matrix.enable_susfs }}
-          path: output_artifacts/*
-
-      - name: Save Ccache Data
-        if: always() && github.event.inputs.use_ccache != 'false'
-        uses: actions/cache/save@v6
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
-
-
-  build_gcc15_lsm:
-    name: LSM Hook (GCC 15, SUSFS=${{ matrix.enable_susfs }})
-    if: (github.event.inputs.toolchain == 'all' || github.event.inputs.toolchain == 'gcc15') && (github.event.inputs.hook_mode == 'all' || github.event.inputs.hook_mode == 'lsm')
-    needs: matrix_prep
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        enable_susfs: ${{ fromJson(needs.matrix_prep.outputs.susfs_matrix) }}
-    steps:
-      - name: Checkout Workflow Repository
-        uses: actions/checkout@v7.0.1
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            aria2 bc bison ca-certificates ccache cpio curl flex \
-            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
-            binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi \
-            git jq libelf-dev libssl-dev make python3 zip xz-utils patch
-
-      - name: Restore Ccache Data
-        id: ccache-restore
-        if: github.event.inputs.use_ccache != 'false'
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-libra-gcc15-lsm-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-${{ github.run_id }}
-          restore-keys: |
-            ccache-libra-gcc15-lsm-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-
-            ccache-libra-gcc15-lsm-${{ matrix.enable_susfs }}-
-            ccache-libra-gcc15-lsm-
-            ccache-libra-gcc15-
-
-      - name: Setup Ccache Configurations & Wrappers
-        if: github.event.inputs.use_ccache != 'false'
-        run: |
-          mkdir -p "${{ env.CCACHE_DIR }}"
-          mkdir -p /dev/shm/ccache-temp
-
-          CCACHE_BIN="${{ github.workspace }}/.ccache-bin"
-          mkdir -p "$CCACHE_BIN"
-          for prog in gcc g++ aarch64-none-linux-gnu-gcc arm-none-linux-gnueabihf-gcc; do
-            ln -sf "$(which ccache)" "$CCACHE_BIN/$prog"
-          done
-          echo "$CCACHE_BIN" >> "$GITHUB_PATH"
-
-          ccache -M 5G \
-            -o hash_dir=false \
-            -o compiler_check=content \
-            -o "sloppiness=file_macro,time_macros,include_file_mtime,include_file_ctime,pch_defines,modules,system_headers" \
-            -o depend_mode=true \
-            -o compression=true \
-            -o compression_level=1 \
-            -o keep_comments_cpp=true \
-            -o "cache_dir=${{ env.CCACHE_DIR }}" \
-            -o "base_dir=${{ github.workspace }}" \
-            -o "temporary_dir=/dev/shm/ccache-temp" \
-            -o file_clone=false \
-            -o hard_link=false \
-            -z
-
-          echo "CCACHE_DIR=${{ env.CCACHE_DIR }}" >> $GITHUB_ENV
-          echo "USE_CCACHE=1" >> $GITHUB_ENV
-          echo "CCACHE_COMPILERCHECK=content" >> $GITHUB_ENV
-          echo "CCACHE_SLOPPINESS=file_macro,time_macros,include_file_mtime,include_file_ctime,pch_defines,modules,system_headers" >> $GITHUB_ENV
-          echo "CCACHE_COMPRESS=true" >> $GITHUB_ENV
-          echo "CCACHE_COMPRESSTYPE=zstd" >> $GITHUB_ENV
-          echo "CCACHE_COMPRESSLEVEL=1" >> $GITHUB_ENV
-          echo "CCACHE_BASEDIR=${{ github.workspace }}" >> $GITHUB_ENV
-          echo "CCACHE_NOHASHDIR=true" >> $GITHUB_ENV
-          echo "CCACHE_TEMPDIR=/dev/shm/ccache-temp" >> $GITHUB_ENV
-
-      - name: Fetch Toolchain (Arm GNU Toolchain GCC 15)
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/toolchains"
-          ARM_VER="${{ inputs.arm_gcc_version || '15.2.rel1' }}"
-          GCC64_DIR="$GITHUB_WORKSPACE/toolchains/arm-gnu-toolchain-${ARM_VER}-x86_64-aarch64-none-linux-gnu"
-          GCC32_DIR="$GITHUB_WORKSPACE/toolchains/arm-gnu-toolchain-${ARM_VER}-x86_64-arm-none-linux-gnueabihf"
-
-          if [ ! -d "$GCC64_DIR/bin" ]; then
-            ARCHIVE64="arm-gnu-toolchain-${ARM_VER}-x86_64-aarch64-none-linux-gnu.tar.xz"
-            echo "⚡ Downloading Arm GNU Toolchain 64-bit ${ARM_VER}..."
-            URL_GITLAB="https://gitlab.arm.com/api/v4/projects/tooling%2Fgnu-toolchains-for-arm/packages/generic/gnu-toolchain/${ARM_VER}/${ARCHIVE64}"
-            URL_DEV="https://developer.arm.com/-/media/Files/downloads/gnu/${ARM_VER}/binrel/${ARCHIVE64}"
-            aria2c -s 16 -x 16 -k 1M "$URL_GITLAB" "$URL_DEV" -o gcc64.tar.xz || curl -fL "$URL_DEV" -o gcc64.tar.xz
-            tar -xf gcc64.tar.xz -C "$GITHUB_WORKSPACE/toolchains"
-            rm -f gcc64.tar.xz
-          fi
-
-          if [ ! -d "$GCC32_DIR/bin" ]; then
-            ARCHIVE32="arm-gnu-toolchain-${ARM_VER}-x86_64-arm-none-linux-gnueabihf.tar.xz"
-            echo "⚡ Downloading Arm GNU Toolchain 32-bit ${ARM_VER}..."
-            URL_GITLAB="https://gitlab.arm.com/api/v4/projects/tooling%2Fgnu-toolchains-for-arm/packages/generic/gnu-toolchain/${ARM_VER}/${ARCHIVE32}"
-            URL_DEV="https://developer.arm.com/-/media/Files/downloads/gnu/${ARM_VER}/binrel/${ARCHIVE32}"
-            aria2c -s 16 -x 16 -k 1M "$URL_GITLAB" "$URL_DEV" -o gcc32.tar.xz || curl -fL "$URL_DEV" -o gcc32.tar.xz
-            tar -xf gcc32.tar.xz -C "$GITHUB_WORKSPACE/toolchains"
-            rm -f gcc32.tar.xz
-          fi
-
-          echo "$GCC64_DIR/bin" >> "$GITHUB_PATH"
-          echo "$GCC32_DIR/bin" >> "$GITHUB_PATH"
-          echo "Installed Arm GNU Toolchain GCC 15:"
-          "$GCC64_DIR/bin/aarch64-none-linux-gnu-gcc" --version | head -n1
-
-      - name: Checkout Kernel Source
-        uses: actions/checkout@v7.0.1
-        with:
-          repository: ${{ inputs.kernel_repo || 'yapixel/android_kernel_xiaomi_libra' }}
-          ref: ${{ inputs.kernel_branch || 'personal-clean' }}
-          path: kernel
-          fetch-depth: 1
-
-      - name: Setup xxksu (KernelSU)
-        run: |
-          KSU_BRANCH="${{ github.event.inputs.ksu_branch || 'master' }}"
-          echo "Configured xxksu branch: $KSU_BRANCH"
-          if [ "$KSU_BRANCH" = "builtin" ]; then
-            echo "Using builtin drivers/kernelsu from kernel tree."
-          else
-            echo "Fetching xxksu from backslashxx/KernelSU ($KSU_BRANCH)..."
-            rm -rf "$GITHUB_WORKSPACE/xxksu" "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
-            git clone --depth 1 -b "$KSU_BRANCH" https://github.com/backslashxx/KernelSU.git "$GITHUB_WORKSPACE/xxksu"
-            KSU_COMMIT=$(git -C "$GITHUB_WORKSPACE/xxksu" rev-parse --short HEAD 2>/dev/null || echo "")
-            echo "xxksu commit: $KSU_COMMIT"
-            cp -r "$GITHUB_WORKSPACE/xxksu/kernel" "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
-            echo "Successfully installed xxksu into drivers/kernelsu"
-          fi
-
-          cd "$GITHUB_WORKSPACE/kernel"
-          # Ensure Makefile and Kconfig include drivers/kernelsu
-          if ! grep -q "CONFIG_KSU" drivers/Makefile; then
-            echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
-          fi
-          if ! grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig; then
-            sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
-          fi
-
-          # Ensure base KernelSU config in libra_defconfig
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KALLSYMS
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_HOSTSREDIRECT
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_THRONE_TRACKER_ALWAYS_THREADED
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_HEURISTIC_IN_TREE_BUILD
-
-          # Enable dynamic branch-link and LSM hooks for LSM mode
-          echo "Enabling dynamic branch-link and LSM hooks for LSM mode..."
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_HACK_ARM64_BRANCH_LINK
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_LSM_SECURITY_HOOKS
-
-      - name: Apply SuSFS v2.3.0 Patches
-        if: matrix.enable_susfs == 'true'
-        run: |
-          cd "$GITHUB_WORKSPACE/kernel"
-          echo "Cloning yapixel/susfs4ksu (branch: kernel-3.10)..."
-          git clone --depth 1 -b kernel-3.10 https://github.com/yapixel/susfs4ksu.git "$GITHUB_WORKSPACE/susfs4ksu"
-
-          echo "Copying SuSFS core source files..."
-          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/fs/susfs.c" fs/
-          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/susfs.h" include/linux/
-          cp "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/susfs_def.h" include/linux/
-
-          echo "Applying SuSFS KernelSU patch..."
-          cd "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
-          patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
-
-          echo "Applying SuSFS kernel VFS patch..."
-          cd "$GITHUB_WORKSPACE/kernel"
-          patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_kernel-3.10.patch"
-
-          echo "Configuring SuSFS in libra_defconfig..."
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_PATH
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_MOUNT
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_KSTAT
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SPOOF_UNAME
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_ENABLE_LOG
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_OPEN_REDIRECT
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS_SUS_MAP
-
-      - name: Metadata
-        id: meta
-        run: |
-          KSU_BRANCH="${{ github.event.inputs.ksu_branch || 'master' }}"
-          K_VER="${{ needs.matrix_prep.outputs.ksu_ver }}"
-          SUSFS_VER="${{ needs.matrix_prep.outputs.susfs_ver }}"
-
-          RAW_TOOLCHAIN_STR=$(aarch64-none-linux-gnu-gcc --version 2>&1 | head -n1)
-          TOOLCHAIN_DISPLAY="$RAW_TOOLCHAIN_STR"
-
-          echo "ksu_ver=$K_VER" >> "$GITHUB_OUTPUT"
-          echo "toolchain_display=$TOOLCHAIN_DISPLAY" >> "$GITHUB_OUTPUT"
-          echo "kernel_ver=3.10.108" >> "$GITHUB_OUTPUT"
-          echo "susfs_ver=$SUSFS_VER" >> "$GITHUB_OUTPUT"
-
-          echo "======================================"
-          echo "🐧 Kernel Base: Linux 3.10.108 (Xiaomi Mi 4c libra)"
-          echo "🔧 KSU Branch: $KSU_BRANCH (+$K_VER)"
-          echo "🪝 Hook Mode: lsm"
-          echo "🛡️ SUSFS: ${{ matrix.enable_susfs }} ($SUSFS_VER)"
-          echo "⚙️ Toolchain: $TOOLCHAIN_DISPLAY"
-          echo "⚡ Ccache: ${{ github.event.inputs.use_ccache != 'false' && 'Enabled' || 'Disabled' }}"
-          echo "======================================"
-
-      - name: Build Kernel
-        run: |
-          cd "$GITHUB_WORKSPACE/kernel"
-          if [ "${{ github.event.inputs.use_ccache }}" != "false" ]; then
-            export PATH="${{ github.workspace }}/.ccache-bin:$PATH"
-            CCACHE_PREFIX="ccache "
-          else
-            CCACHE_PREFIX=""
-          fi
-          export ARCH=arm64
-          export SUBARCH=arm64
-
-          echo "Using GCC 15 compiler:"
-          aarch64-none-linux-gnu-gcc --version | head -n 1
-
-          mkdir -p out
-          if [ -f libra_defconfig_append_gcc ]; then
-            echo "Merging libra_defconfig with libra_defconfig_append_gcc..."
-            ARCH=arm64 scripts/kconfig/merge_config.sh -O out arch/arm64/configs/libra_defconfig libra_defconfig_append_gcc
-          else
-            ARCH=arm64 scripts/kconfig/merge_config.sh -O out arch/arm64/configs/libra_defconfig
-            scripts/config --file out/.config -e CONFIG_LTO_NONE -d CONFIG_LTO_CLANG -d CONFIG_LTO
-          fi
-
-          scripts/config --file out/.config -e KSU_HACK_ARM64_BRANCH_LINK
-          scripts/config --file out/.config -e KSU_LSM_SECURITY_HOOKS
-          scripts/config --file out/.config -d CC_WERROR
-
-          if [ "${{ matrix.enable_susfs }}" != "true" ]; then
-            scripts/config --file out/.config -d CONFIG_KSU_SUSFS
-          fi
-
-          make -j$(nproc) ARCH=arm64 SUBARCH=arm64 O=out \
-            CC="${CCACHE_PREFIX}aarch64-none-linux-gnu-gcc" \
-            LD="aarch64-none-linux-gnu-ld" \
-            AR="aarch64-none-linux-gnu-ar" \
-            AS="aarch64-none-linux-gnu-as" \
-            NM="aarch64-none-linux-gnu-nm" \
-            CROSS_COMPILE_ARM32="${CCACHE_PREFIX}arm-none-linux-gnueabihf-" \
-            OBJCOPY="aarch64-none-linux-gnu-objcopy" \
-            OBJDUMP="aarch64-none-linux-gnu-objdump" \
-            STRIP="aarch64-none-linux-gnu-strip" \
-            CROSS_COMPILE="${CCACHE_PREFIX}aarch64-none-linux-gnu-" \
-            INSTALL_MOD_STRIP=1 \
-            Image.gz-dtb
-
-          if [ ! -f out/arch/arm64/boot/Image.gz-dtb ]; then
-            echo "Error: Image.gz-dtb was not generated!"
-            exit 1
-          fi
-
-      - name: Ccache Performance Stats
-        if: github.event.inputs.use_ccache != 'false'
-        run: |
-          echo "=== Ccache Performance Stats (lsm, SUSFS=${{ matrix.enable_susfs }}) ==="
-          ccache -s
-
-      - name: Package AnyKernel3
-        id: package
-        run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git "$GITHUB_WORKSPACE/AnyKernel3"
-          rm -rf "$GITHUB_WORKSPACE/AnyKernel3/.git"
-          # Strip unnecessary large binaries (snapshotupdater_static is for Android 10+ dynamic partitions; saving ~1.7MB)
-          rm -f "$GITHUB_WORKSPACE/AnyKernel3/tools/snapshotupdater_static"
-          rm -rf "$GITHUB_WORKSPACE/AnyKernel3/modules" "$GITHUB_WORKSPACE/AnyKernel3/patch" "$GITHUB_WORKSPACE/AnyKernel3/ramdisk"
-
-          cp "$GITHUB_WORKSPACE/anykernel.sh" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-          cp "$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb" "$GITHUB_WORKSPACE/AnyKernel3/"
-
-          KSU_VER="${{ steps.meta.outputs.ksu_ver }}"
-          SUSFS_VER="${{ steps.meta.outputs.susfs_ver }}"
-          ARM_VER="${{ inputs.arm_gcc_version || '15.2.rel1' }}"
-          DATE=$(date +%y%m%d)
-
-          sed -i -E "s/kernel\.compiler=.*/kernel.compiler=arm-gnu-${ARM_VER}/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-
-          if [ "${{ matrix.enable_susfs }}" = "true" ] && [ -n "$SUSFS_VER" ]; then
-            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (lsm, gcc15, SuSFS ${SUSFS_VER})/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-            ZIP_NAME="KSU_SUSFS_${SUSFS_VER}_libra_3.10.108+${KSU_VER}-lsm-gcc15-${DATE}.zip"
-          else
-            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (lsm, gcc15)/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-            ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-lsm-gcc15-${DATE}.zip"
-          fi
-
-          mkdir -p "$GITHUB_WORKSPACE/output_artifacts"
-          cd "$GITHUB_WORKSPACE/AnyKernel3"
-          zip -r9 "$GITHUB_WORKSPACE/output_artifacts/$ZIP_NAME" * -x .git .gitignore README.md *placeholder
-
-          echo "KERNEL_VER='3.10.108'" > "$GITHUB_WORKSPACE/output_artifacts/build_metadata_gcc15_lsm_${{ matrix.enable_susfs }}.env"
-          echo "KSU_VER='${KSU_VER}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_gcc15_lsm_${{ matrix.enable_susfs }}.env"
-          echo "TOOLCHAIN_DISPLAY='${{ steps.meta.outputs.toolchain_display }}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_gcc15_lsm_${{ matrix.enable_susfs }}.env"
-          if [ "${{ matrix.enable_susfs }}" = "true" ] && [ -n "$SUSFS_VER" ]; then
-            echo "SUSFS_VER='${SUSFS_VER}'" >> "$GITHUB_WORKSPACE/output_artifacts/build_metadata_gcc15_lsm_${{ matrix.enable_susfs }}.env"
-          fi
-
-          echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
-          echo "zip_path=$GITHUB_WORKSPACE/output_artifacts/$ZIP_NAME" >> "$GITHUB_OUTPUT"
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: kernel-gcc15-lsm-${{ matrix.enable_susfs }}
-          path: output_artifacts/*
-
-      - name: Save Ccache Data
-        if: always() && github.event.inputs.use_ccache != 'false'
-        uses: actions/cache/save@v6
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
-
 
   publish_release:
     name: Publish Release
     needs:
       - matrix_prep
-      - build_clang_manual
-      - build_clang_lsm
-      - build_gcc4_manual
-      - build_gcc4_lsm
-      - build_gcc15_manual
-      - build_gcc15_lsm
+      - build_manual
+      - build_lsm
     if: always() && !cancelled() && !contains(needs.*.result, 'failure') && (github.event.inputs.create_release != 'false')
     runs-on: ubuntu-24.04
     steps:
@@ -2084,14 +690,7 @@ jobs:
             eval "$(grep -E '^(KERNEL_VER|KSU_VER|TOOLCHAIN_DISPLAY|SUSFS_VER)=' ./all_artifacts/build_metadata*.env 2>/dev/null | head -n4 || true)"
           fi
 
-          TOOLCHAIN_INPUT="${{ github.event.inputs.toolchain || 'all' }}"
-          case "$TOOLCHAIN_INPUT" in
-            gcc4) TOOLCHAIN_SUMMARY="Linaro GCC 4.9.4" ;;
-            clang) TOOLCHAIN_SUMMARY="ZyCromerZ Clang 23" ;;
-            gcc15) TOOLCHAIN_SUMMARY="Arm GNU Toolchain GCC 15" ;;
-            all|*) TOOLCHAIN_SUMMARY="Multi-Compiler (Linaro GCC 4.9, ZyCromerZ Clang 23, Arm GCC 15)" ;;
-          esac
-
+          TOOLCHAIN_SUMMARY="Linaro GCC 4.9.4"
           KERNEL_VER="${KERNEL_VER:-3.10.108}"
           KSU_VER="${KSU_VER:-${{ needs.matrix_prep.outputs.ksu_ver }}}"
           SUSFS_VER="${SUSFS_VER:-${{ needs.matrix_prep.outputs.susfs_ver }}}"
@@ -2110,7 +709,7 @@ jobs:
             echo "| **Kernel Base** | \`$KERNEL_REPO\` (branch: \`${BRANCH}\`) |"
             echo "| **KernelSU** | \`$KSU_BRANCH\` (\`$KSU_VER\`) |"
             echo "| **SuSFS** | \`$SUSFS_VER\` |"
-            echo "| **Toolchains** | \`$TOOLCHAIN_SUMMARY\` |"
+            echo "| **Toolchain** | \`$TOOLCHAIN_SUMMARY\` |"
             echo "| **Build Date** | $BUILD_TIME |"
             echo ""
             echo "### 📦 Released Packages"
@@ -2126,8 +725,14 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "⚡ Release $TAG already exists for today. Overwriting assets and updating release..."
             gh release upload "$TAG" "${ZIP_FILES[@]}" --clobber
-            gh release edit "$TAG"               --target "${{ github.ref_name }}"               --title "$RELEASE_TITLE"               --notes-file release_body.md
+            gh release edit "$TAG" \
+              --target "${{ github.ref_name }}" \
+              --title "$RELEASE_TITLE" \
+              --notes-file release_body.md
           else
             echo "🚀 Creating new release for $TAG..."
-            gh release create "$TAG" "${ZIP_FILES[@]}"               --target "${{ github.ref_name }}"               --title "$RELEASE_TITLE"               --notes-file release_body.md
+            gh release create "$TAG" "${ZIP_FILES[@]}" \
+              --target "${{ github.ref_name }}" \
+              --title "$RELEASE_TITLE" \
+              --notes-file release_body.md
           fi
