@@ -746,8 +746,9 @@ jobs:
             exit 0
           fi
 
-          if compgen -G "./all_artifacts/build_metadata*.env" > /dev/null; then
-            eval "$(grep -E '^(KERNEL_VER|KSU_VER|TOOLCHAIN_DISPLAY|SUSFS_VER)=' ./all_artifacts/build_metadata*.env 2>/dev/null | head -n4 || true)"
+          META_FILE=$(ls ./all_artifacts/build_metadata*.env 2>/dev/null | head -n1 || true)
+          if [ -n "$META_FILE" ] && [ -f "$META_FILE" ]; then
+            source "$META_FILE"
           fi
 
           TOOLCHAIN_SUMMARY="Linaro GCC 4.9.4"
