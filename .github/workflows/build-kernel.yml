@@ -129,18 +129,18 @@ jobs:
             patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_kernel-3.10.patch"
 
             echo "Appending SuSFS configuration to libra_defconfig..."
-            cat << 'EOF' >> arch/arm64/configs/libra_defconfig
-CONFIG_KSU_SUSFS=y
-CONFIG_KSU_SUSFS_SUS_PATH=y
-CONFIG_KSU_SUSFS_SUS_MOUNT=y
-CONFIG_KSU_SUSFS_SUS_KSTAT=y
-CONFIG_KSU_SUSFS_SPOOF_UNAME=y
-CONFIG_KSU_SUSFS_ENABLE_LOG=y
-CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
-CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
-CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
-CONFIG_KSU_SUSFS_SUS_MAP=y
-EOF
+            {
+              echo "CONFIG_KSU_SUSFS=y"
+              echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
+              echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
+              echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
+              echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
+              echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
+              echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
+              echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
+              echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
+              echo "CONFIG_KSU_SUSFS_SUS_MAP=y"
+            } >> arch/arm64/configs/libra_defconfig
           fi
 
       - name: Extract KSU & SuSFS Version from Kernel Source
@@ -273,16 +273,13 @@ EOF
           echo "Found build packages in artifacts/:"
           ls -la artifacts/
 
-          cat << EOF > release_body.md
-## Xiaomi Mi 4c/4s (libra/aqua) Kernel Build
-- **Kernel Branch**: \`${BRANCH}\`
-- **Build Date**: \`${DATE}\`
-- **Build Matrix**:
-  - **Non-SuSFS**: Clean KernelSU 32704 with manual syscall hooks (\`fs/exec.c\`, \`fs/open.c\`, \`fs/stat.c\`) and manual security hooks v2.0 (\`security/security.c\`)
-  - **SuSFS v2.3.0**: KernelSU 32704 + SuSFS v2.3.0 de-inlined engine ported from [yapixel/susfs4ksu](https://github.com/yapixel/susfs4ksu)
-
-### Released Packages
-EOF
+          printf "## Xiaomi Mi 4c/4s (libra/aqua) Kernel Build\n" > release_body.md
+          printf -- "- **Kernel Branch**: \`%s\`\n" "$BRANCH" >> release_body.md
+          printf -- "- **Build Date**: \`%s\`\n" "$DATE" >> release_body.md
+          printf -- "- **Build Matrix**:\n" >> release_body.md
+          printf -- "  - **Non-SuSFS**: Clean KernelSU 32704 with manual syscall hooks (\`fs/exec.c\`, \`fs/open.c\`, \`fs/stat.c\`) and manual security hooks v2.0 (\`security/security.c\`)\n" >> release_body.md
+          printf -- "  - **SuSFS v2.3.0**: KernelSU 32704 + SuSFS v2.3.0 de-inlined engine ported from [yapixel/susfs4ksu](https://github.com/yapixel/susfs4ksu)\n\n" >> release_body.md
+          printf "### Released Packages\n" >> release_body.md
 
           for f in artifacts/*.zip; do
             if [ -f "$f" ]; then
