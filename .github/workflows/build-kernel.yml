@@ -208,15 +208,24 @@ jobs:
       - name: Setup xxksu (KernelSU)
         run: |
           KSU_BRANCH="${{ github.event.inputs.ksu_branch || 'master' }}"
+          echo "Configured xxksu branch: $KSU_BRANCH"
+          if [ "$KSU_BRANCH" = "builtin" ]; then
+            echo "Using builtin drivers/kernelsu from kernel tree."
+          else
+            echo "Fetching xxksu from backslashxx/KernelSU ($KSU_BRANCH)..."
+            rm -rf "$GITHUB_WORKSPACE/xxksu" "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
+            git clone --depth 1 -b "$KSU_BRANCH" https://github.com/backslashxx/KernelSU.git "$GITHUB_WORKSPACE/xxksu"
+            KSU_COMMIT=$(git -C "$GITHUB_WORKSPACE/xxksu" rev-parse --short HEAD 2>/dev/null || echo "")
+            echo "xxksu commit: $KSU_COMMIT"
+            cp -r "$GITHUB_WORKSPACE/xxksu/kernel" "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
+            echo "Successfully installed xxksu into drivers/kernelsu"
+          fi
+
           cd "$GITHUB_WORKSPACE/kernel"
-
-          echo "Initializing KernelSU ($KSU_BRANCH)..."
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s "$KSU_BRANCH"
-
+          # Ensure Makefile and Kconfig include drivers/kernelsu
           if ! grep -q "CONFIG_KSU" drivers/Makefile; then
             echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
           fi
-
           if ! grep -q 'source "drivers/kernelsu/Kconfig"' drivers/Kconfig; then
             sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
           fi
@@ -499,15 +508,24 @@ jobs:
       - name: Setup xxksu (KernelSU)
         run: |
           KSU_BRANCH="${{ github.event.inputs.ksu_branch || 'master' }}"
+          echo "Configured xxksu branch: $KSU_BRANCH"
+          if [ "$KSU_BRANCH" = "builtin" ]; then
+            echo "Using builtin drivers/kernelsu from kernel tree."
+          else
+            echo "Fetching xxksu from backslashxx/KernelSU ($KSU_BRANCH)..."
+            rm -rf "$GITHUB_WORKSPACE/xxksu" "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
+            git clone --depth 1 -b "$KSU_BRANCH" https://github.com/backslashxx/KernelSU.git "$GITHUB_WORKSPACE/xxksu"
+            KSU_COMMIT=$(git -C "$GITHUB_WORKSPACE/xxksu" rev-parse --short HEAD 2>/dev/null || echo "")
+            echo "xxksu commit: $KSU_COMMIT"
+            cp -r "$GITHUB_WORKSPACE/xxksu/kernel" "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
+            echo "Successfully installed xxksu into drivers/kernelsu"
+          fi
+
           cd "$GITHUB_WORKSPACE/kernel"
-
-          echo "Initializing KernelSU ($KSU_BRANCH)..."
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s "$KSU_BRANCH"
-
+          # Ensure Makefile and Kconfig include drivers/kernelsu
           if ! grep -q "CONFIG_KSU" drivers/Makefile; then
             echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
           fi
-
           if ! grep -q 'source "drivers/kernelsu/Kconfig"' drivers/Kconfig; then
             sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
           fi
