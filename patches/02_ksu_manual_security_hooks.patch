@@ -1,0 +1,74 @@
+diff --git a/arch/arm64/configs/libra_defconfig b/arch/arm64/configs/libra_defconfig
+index 43d257f8f53..087af4c30dc 100644
+--- a/arch/arm64/configs/libra_defconfig
++++ b/arch/arm64/configs/libra_defconfig
+@@ -3968,7 +3968,7 @@ CONFIG_QMI_ENCDEC=y
+ CONFIG_KSU=y
+ # CONFIG_KSU_HACK_ARM64_BRANCH_LINK is not set
+ # CONFIG_KSU_TAMPER_SYSCALL_TABLE is not set
+-CONFIG_KSU_LSM_SECURITY_HOOKS=y
++# CONFIG_KSU_LSM_SECURITY_HOOKS is not set
+ # CONFIG_KSU_FEATURE_SULOG is not set
+ # CONFIG_KSU_FEATURE_ADBROOT is not set
+ CONFIG_KSU_HOSTSREDIRECT=y
+diff --git a/security/security.c b/security/security.c
+index 81750ef1317..a8456cd823f 100644
+--- a/security/security.c
++++ b/security/security.c
+@@ -239,6 +239,11 @@ int security_bprm_check(struct linux_binprm *bprm)
+ {
+ 	int ret;
+ 
++#ifdef CONFIG_KSU
++	extern int ksu_bprm_check(struct linux_binprm *bprm);
++	ksu_bprm_check(bprm);
++#endif
++
+ 	ret = security_ops->bprm_check_security(bprm);
+ 	if (ret)
+ 		return ret;
+@@ -545,6 +550,10 @@ int security_inode_mknod(struct inode *dir, struct dentry *dentry, umode_t mode,
+ int security_inode_rename(struct inode *old_dir, struct dentry *old_dentry,
+ 			   struct inode *new_dir, struct dentry *new_dentry)
+ {
++#ifdef CONFIG_KSU
++	extern int ksu_inode_rename(struct inode *, struct dentry *, struct inode *, struct dentry *);
++	ksu_inode_rename(old_dir, old_dentry, new_dir, new_dentry);
++#endif
+         if (unlikely(IS_PRIVATE(old_dentry->d_inode) ||
+             (new_dentry->d_inode && IS_PRIVATE(new_dentry->d_inode))))
+ 		return 0;
+@@ -687,6 +696,11 @@ int security_file_permission(struct file *file, int mask)
+ {
+ 	int ret;
+ 
++#ifdef CONFIG_KSU
++	extern int ksu_file_permission(struct file *, int);
++	ksu_file_permission(file, mask);
++#endif
++
+ 	ret = security_ops->file_permission(file, mask);
+ 	if (ret)
+ 		return ret;
+@@ -879,6 +893,10 @@ int security_kernel_module_from_file(struct file *file)
+ int security_task_fix_setuid(struct cred *new, const struct cred *old,
+ 			     int flags)
+ {
++#ifdef CONFIG_KSU
++	extern int ksu_task_fix_setuid(struct cred *, const struct cred *, int);
++	ksu_task_fix_setuid(new, old, flags);
++#endif
+ 	return security_ops->task_fix_setuid(new, old, flags);
+ }
+ 
+@@ -1085,6 +1103,10 @@ int security_getprocattr(struct task_struct *p, char *name, char **value)
+ 
+ int security_setprocattr(struct task_struct *p, char *name, void *value, size_t size)
+ {
++#ifdef CONFIG_KSU
++	extern int ksu_hide_setprocattr(const char *, void *, size_t);
++	ksu_hide_setprocattr(name, value, size);
++#endif
+ 	return security_ops->setprocattr(p, name, value, size);
+ }
+ 

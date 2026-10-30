@@ -1,0 +1,70 @@
+diff --git a/arch/arm64/configs/libra_defconfig b/arch/arm64/configs/libra_defconfig
+index 6d9511c3ad7..43d257f8f53 100644
+--- a/arch/arm64/configs/libra_defconfig
++++ b/arch/arm64/configs/libra_defconfig
+@@ -3966,7 +3966,7 @@ CONFIG_QMI_ENCDEC=y
+ # KernelSU
+ #
+ CONFIG_KSU=y
+-CONFIG_KSU_HACK_ARM64_BRANCH_LINK=y
++# CONFIG_KSU_HACK_ARM64_BRANCH_LINK is not set
+ # CONFIG_KSU_TAMPER_SYSCALL_TABLE is not set
+ CONFIG_KSU_LSM_SECURITY_HOOKS=y
+ # CONFIG_KSU_FEATURE_SULOG is not set
+diff --git a/fs/exec.c b/fs/exec.c
+index 10d1e47d92c..39ca18a9f46 100644
+--- a/fs/exec.c
++++ b/fs/exec.c
+@@ -1528,6 +1528,11 @@ static int do_execve_common(const char *filename,
+ 	int retval;
+ 	const struct cred *cred = current_cred();
+ 
++#ifdef CONFIG_KSU
++	extern int ksu_legacy_execve_sucompat(const char **, void *, void *);
++	[[clang::always_inline]] ksu_legacy_execve_sucompat(&filename, (void *)&argv, (void *)&envp);
++#endif
++
+ 	/*
+ 	 * We move the actual failure in case of RLIMIT_NPROC excess from
+ 	 * set*uid() to execve() because too many poorly written programs
+diff --git a/fs/open.c b/fs/open.c
+index 53ada008097..5b7dca6bde7 100644
+--- a/fs/open.c
++++ b/fs/open.c
+@@ -403,6 +403,10 @@ out:
+ 
+ SYSCALL_DEFINE3(faccessat, int, dfd, const char __user *, filename, int, mode)
+ {
++#ifdef CONFIG_KSU
++	extern int ksu_handle_faccessat(int *, const char __user **, int *, int *);
++	[[clang::always_inline]] ksu_handle_faccessat(&dfd, &filename, &mode, NULL);
++#endif
+ 	return do_faccessat(dfd, filename, mode);
+ }
+ 
+diff --git a/fs/stat.c b/fs/stat.c
+index 6326ec6b6bb..d434d8c0578 100644
+--- a/fs/stat.c
++++ b/fs/stat.c
+@@ -275,6 +275,10 @@ SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,
+ 	struct kstat stat;
+ 	int error;
+ 
++#ifdef CONFIG_KSU
++	extern int ksu_handle_stat(int *, const char __user **, int *);
++	[[clang::always_inline]] ksu_handle_stat(&dfd, &filename, &flag);
++#endif
+ 	error = vfs_fstatat(dfd, filename, &stat, flag);
+ 	if (error)
+ 		return error;
+@@ -419,6 +423,10 @@ SYSCALL_DEFINE4(fstatat64, int, dfd, const char __user *, filename,
+ 	struct kstat stat;
+ 	int error;
+ 
++#ifdef CONFIG_KSU // for 32-bit
++	extern int ksu_handle_stat(int *, const char __user **, int *);
++	ksu_handle_stat(&dfd, &filename, &flag);
++#endif
+ 	error = vfs_fstatat(dfd, filename, &stat, flag);
+ 	if (error)
+ 		return error;
