@@ -386,7 +386,7 @@ jobs:
 
           if [ "${{ matrix.enable_susfs }}" = "true" ] && [ -n "$SUSFS_VER" ]; then
             sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (manual, SuSFS ${SUSFS_VER})/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-            ZIP_NAME="KSU_SUSFS_${SUSFS_VER}_libra_3.10.108+${KSU_VER}-manual-${DATE}.zip"
+            ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-manual-SUSFS_${SUSFS_VER}-${DATE}.zip"
           else
             sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (manual)/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
             ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-manual-${DATE}.zip"
@@ -678,7 +678,7 @@ jobs:
 
           if [ "${{ matrix.enable_susfs }}" = "true" ] && [ -n "$SUSFS_VER" ]; then
             sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (lsm, SuSFS ${SUSFS_VER})/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-            ZIP_NAME="KSU_SUSFS_${SUSFS_VER}_libra_3.10.108+${KSU_VER}-lsm-${DATE}.zip"
+            ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-lsm-SUSFS_${SUSFS_VER}-${DATE}.zip"
           else
             sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (lsm)/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
             ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-lsm-${DATE}.zip"
