@@ -78,7 +78,7 @@ jobs:
           path: kernel
           fetch-depth: 1
 
-      - name: Extract KSU Version from Kernel Source
+      - name: Extract KSU & SuSFS Version from Kernel Source
         id: ksu_version
         run: |
           KSU_VER=""
@@ -90,6 +90,13 @@ jobs:
           fi
           echo "Detected integrated KSU version: $KSU_VER"
           echo "ksu_ver=$KSU_VER" >> "$GITHUB_OUTPUT"
+
+          SUSFS_VER=""
+          if [ -f "$GITHUB_WORKSPACE/kernel/include/linux/susfs.h" ]; then
+            SUSFS_VER=$(grep -oP '(?<=#define SUSFS_VERSION ")[^"]+' "$GITHUB_WORKSPACE/kernel/include/linux/susfs.h" | head -n 1 || true)
+          fi
+          echo "Detected integrated SuSFS version: $SUSFS_VER"
+          echo "susfs_ver=$SUSFS_VER" >> "$GITHUB_OUTPUT"
 
       - name: Build Kernel
         run: |
@@ -136,7 +143,12 @@ jobs:
           cp "$GITHUB_WORKSPACE/anykernel.sh" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
 
           KSU_VER="${{ steps.ksu_version.outputs.ksu_ver }}"
-          sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER}/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
+          SUSFS_VER="${{ steps.ksu_version.outputs.susfs_ver }}"
+          if [ -n "$SUSFS_VER" ]; then
+            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (SuSFS ${SUSFS_VER})/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
+          else
+            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER}/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
+          fi
 
       - name: Package AnyKernel3 Zip
         id: package
@@ -144,19 +156,35 @@ jobs:
           cp "$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb" "$GITHUB_WORKSPACE/AnyKernel3/"
 
           KSU_VER="${{ steps.ksu_version.outputs.ksu_ver }}"
+          SUSFS_VER="${{ steps.ksu_version.outputs.susfs_ver }}"
           DATE=$(date +%y%m%d)
           BRANCH="${{ inputs.kernel_branch || 'susfs-3.10' }}"
-          ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-${DATE}.zip"
+
+          if [ -n "$SUSFS_VER" ]; then
+            ZIP_NAME="KSU_SUSFS_${SUSFS_VER}_libra_3.10.108+${KSU_VER}-${DATE}.zip"
+            RELEASE_NAME="Libra Kernel (${BRANCH}) + KSU ${KSU_VER} + SuSFS ${SUSFS_VER} - ${DATE}"
+          else
+            ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-${DATE}.zip"
+            RELEASE_NAME="Libra Kernel (${BRANCH}) + KSU ${KSU_VER} - ${DATE}"
+          fi
           if [[ "$BRANCH" != *"ksu"* ]] && [[ "$BRANCH" != *"susfs"* ]] && [[ "$BRANCH" != *"personal"* ]]; then
             ZIP_NAME="libra_3.10.108-${DATE}.zip"
+            RELEASE_NAME="Libra Kernel (${BRANCH}) - ${DATE}"
           fi
 
           cd "$GITHUB_WORKSPACE/AnyKernel3"
           zip -r9 "$GITHUB_WORKSPACE/$ZIP_NAME" * -x .git .gitignore README.md *placeholder
 
+          printf "## Xiaomi Mi 4c/4s (libra/aqua) Kernel Build\n- **Branch**: \`%s\`\n- **KSU Version**: \`%s\`\n" "$BRANCH" "$KSU_VER" > "$GITHUB_WORKSPACE/release_body.md"
+          if [ -n "$SUSFS_VER" ]; then
+            printf -- "- **SuSFS Version**: \`%s\`\n" "$SUSFS_VER" >> "$GITHUB_WORKSPACE/release_body.md"
+          fi
+          printf -- "- **Build Date**: \`%s\`\n- **Package**: \`%s\`\n" "$DATE" "$ZIP_NAME" >> "$GITHUB_WORKSPACE/release_body.md"
+
           echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
           echo "zip_path=$GITHUB_WORKSPACE/$ZIP_NAME" >> "$GITHUB_OUTPUT"
-          echo "ksu_ver=$KSU_VER" >> "$GITHUB_OUTPUT"
+          echo "release_name=$RELEASE_NAME" >> "$GITHUB_OUTPUT"
+          echo "body_path=$GITHUB_WORKSPACE/release_body.md" >> "$GITHUB_OUTPUT"
           echo "date=$DATE" >> "$GITHUB_OUTPUT"
 
       - name: Upload Kernel Artifact
@@ -170,13 +198,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.package.outputs.date }}-${{ github.run_number }}
-          name: Libra Kernel (${{ inputs.kernel_branch || 'susfs-3.10' }}) + KSU ${{ steps.ksu_version.outputs.ksu_ver }} - ${{ steps.package.outputs.date }}
+          name: ${{ steps.package.outputs.release_name }}
+          body_path: ${{ steps.package.outputs.body_path }}
           files: ${{ steps.package.outputs.zip_path }}
-          body: |
-            ## Xiaomi Mi 4c/4s (libra/aqua) Kernel Build
-            - **Branch**: `${{ inputs.kernel_branch || 'susfs-3.10' }}`
-            - **KSU Version**: `${{ steps.package.outputs.ksu_ver }}`
-            - **Build Date**: `${{ steps.package.outputs.date }}`
-            - **Package**: `${{ steps.package.outputs.zip_name }}`
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
