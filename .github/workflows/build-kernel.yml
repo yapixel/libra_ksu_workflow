@@ -1,0 +1,229 @@
+name: Build Libra/Aqua Kernel with KSU
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_branch:
+        description: 'Kernel branch to build'
+        required: true
+        default: 'lineage-18.1-ksu'
+        type: choice
+        options:
+          - 'lineage-18.1-ksu'
+          - 'susfs-3.10'
+          - 'lineage-18.1'
+      clang_tag:
+        description: 'Greenforce Clang release tag (default: 20260531 for Clang 22)'
+        required: true
+        default: '20260531'
+        type: string
+      upload_release:
+        description: 'Publish build as GitHub Release'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          temp-reserve-mb: 4096
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison ca-certificates ccache curl flex \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+            binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi \
+            git jq libelf-dev libssl-dev make python3 zip xz-utils
+
+      - name: Fetch Toolchain (Greenforce Clang)
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/toolchain"
+          cd "$GITHUB_WORKSPACE/toolchain"
+          TAG="${{ inputs.clang_tag }}"
+          DOWNLOAD_URL=$(curl -s "https://api.github.com/repos/greenforce-project/greenforce_clang/releases/tags/$TAG" \
+            | jq -r '.assets[] | select(.name | test("gf-clang.*\\.tar\\.gz$")) | .browser_download_url' | head -n 1)
+
+          if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
+            echo "Specified tag not found, falling back to latest Greenforce Clang release"
+            DOWNLOAD_URL=$(curl -s "https://api.github.com/repos/greenforce-project/greenforce_clang/releases/latest" \
+              | jq -r '.assets[] | select(.name | test("gf-clang.*\\.tar\\.gz$")) | .browser_download_url' | head -n 1)
+          fi
+
+          echo "Downloading Clang from: $DOWNLOAD_URL"
+          curl -L "$DOWNLOAD_URL" -o clang.tar.gz
+          tar -xzf clang.tar.gz
+          rm clang.tar.gz
+
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+        with:
+          repository: ximi-libra/android_kernel_xiaomi_libra
+          ref: ${{ inputs.kernel_branch }}
+          path: kernel
+          fetch-depth: 1
+
+      - name: Setup AnyKernel3
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git "$GITHUB_WORKSPACE/AnyKernel3"
+          rm -rf "$GITHUB_WORKSPACE/AnyKernel3/.git"
+
+          # Write anykernel.sh adapted for libra (Mi 4c) / aqua (Mi 4s) matching backslashxx release
+          cat << 'EOF' > "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
+# AnyKernel3 Ramdisk Mod Script
+# osm0sis @ xda-developers
+
+## AnyKernel setup
+# begin properties
+properties() { '
+kernel.string=Kernel
+kernel.branch=${{ inputs.kernel_branch }} branch
+kernel.compiler=clang
+kernel.ksuver=v2.0.0+
+kernel.cpuoc=??
+kernel.gpuoc=??
+kernel.memoc=??
+kernel.made=xx
+message.word=AnyKernel3
+do.devicecheck=1
+do.modules=0
+do.systemless=1
+do.cleanup=1
+do.cleanuponabort=0
+device.name1=libra
+device.name2=aqua
+supported.versions=
+supported.patchlevels=
+'; } # end properties
+
+# shell variables
+block=/dev/block/bootdevice/by-name/boot;
+is_slot_device=auto;
+ramdisk_compression=auto;
+patch_vbmeta_flag=auto;
+
+## AnyKernel methods (DO NOT CHANGE)
+# import patching functions/variables - see for reference
+. tools/ak3-core.sh;
+
+## AnyKernel file attributes
+# set permissions/ownership for included ramdisk files
+set_perm_recursive 0 0 755 644 $ramdisk/*;
+set_perm_recursive 0 0 750 750 $ramdisk/init* $ramdisk/sbin;
+
+mount -o remount,rw /vendor
+
+# Check if old scripts are present, if so remove them
+sed -i '/revvz_exec/d' /vendor/bin/init.qcom.sh 2>/dev/null || true
+sed -i '/revvz_exec/d' /vendor/bin/init.qcom.post_boot.sh 2>/dev/null || true
+sed -i '/sleepy_exec.sh/d' /vendor/bin/init.qcom.sh 2>/dev/null || true
+sed -i '/sleepy_exec.sh/d' /vendor/bin/init.qcom.post_boot.sh 2>/dev/null || true
+rm -rf /vendor/bin/revvz_exec.sh /vendor/bin/sleepy_exec.sh 2>/dev/null || true
+
+## AnyKernel boot install
+dump_boot;
+write_boot;
+## end boot install
+EOF
+
+      - name: Build Kernel
+        run: |
+          cd "$GITHUB_WORKSPACE/kernel"
+          export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
+          export ARCH=arm64
+          export SUBARCH=arm64
+
+          echo "Using compiler:"
+          clang --version | head -n 1
+
+          # Configure out directory and defconfig
+          mkdir -p out
+          ARCH=arm64 scripts/kconfig/merge_config.sh -O out arch/arm64/configs/libra_defconfig
+
+          # Build Image.gz-dtb matching author's build script
+          make -j$(nproc) ARCH=arm64 SUBARCH=arm64 O=out \
+            CC="clang" \
+            AR="llvm-ar" \
+            NM="llvm-nm" \
+            LD="ld.lld" \
+            OBJCOPY="llvm-objcopy" \
+            OBJDUMP="llvm-objdump" \
+            STRIP="llvm-strip" \
+            CLANG_TRIPLE="aarch64-linux-gnu-" \
+            CROSS_COMPILE="aarch64-linux-gnu-" \
+            CROSS_COMPILE_ARM32="arm-linux-gnueabi-" \
+            CROSS_COMPILE_COMPAT="arm-linux-gnueabi-" \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            INSTALL_MOD_STRIP=1 \
+            Image.gz-dtb
+
+          if [ ! -f out/arch/arm64/boot/Image.gz-dtb ]; then
+            echo "Error: Image.gz-dtb was not generated!"
+            exit 1
+          fi
+
+      - name: Package AnyKernel3 Zip
+        id: package
+        run: |
+          cp "$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb" "$GITHUB_WORKSPACE/AnyKernel3/"
+
+          # Determine KSU Version code if present
+          KSU_VER=""
+          if [ -f "$GITHUB_WORKSPACE/kernel/drivers/kernelsu/Makefile" ]; then
+            KSU_VER=$(grep -oP '(?<=KSU_VERSION=)[0-9]+' "$GITHUB_WORKSPACE/kernel/drivers/kernelsu/Makefile" | head -n 1 || true)
+          fi
+          if [ -z "$KSU_VER" ]; then
+            KSU_VER="Custom"
+          fi
+
+          DATE=$(date +%y%m%d)
+          BRANCH="${{ inputs.kernel_branch }}"
+          ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-${DATE}.zip"
+          if [[ "$BRANCH" != *"ksu"* ]] && [[ "$BRANCH" != *"susfs"* ]]; then
+            ZIP_NAME="libra_3.10.108-${DATE}.zip"
+          fi
+
+          cd "$GITHUB_WORKSPACE/AnyKernel3"
+          zip -r9 "$GITHUB_WORKSPACE/$ZIP_NAME" * -x .git .gitignore README.md *placeholder
+
+          echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
+          echo "zip_path=$GITHUB_WORKSPACE/$ZIP_NAME" >> "$GITHUB_OUTPUT"
+          echo "ksu_ver=$KSU_VER" >> "$GITHUB_OUTPUT"
+          echo "date=$DATE" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Kernel Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.zip_name }}
+          path: ${{ steps.package.outputs.zip_path }}
+
+      - name: Create GitHub Release
+        if: ${{ inputs.upload_release == true }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.package.outputs.date }}
+          name: Libra Kernel (${{ inputs.kernel_branch }}) - ${{ steps.package.outputs.date }}
+          files: ${{ steps.package.outputs.zip_path }}
+          body: |
+            ## Xiaomi Mi 4c/4s (libra/aqua) Kernel Build
+            - **Branch**: `${{ inputs.kernel_branch }}`
+            - **KSU Version**: `${{ steps.package.outputs.ksu_ver }}`
+            - **Build Date**: `${{ steps.package.outputs.date }}`
+            - **Package**: `${{ steps.package.outputs.zip_name }}`
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
