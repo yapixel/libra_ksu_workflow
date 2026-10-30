@@ -39,21 +39,11 @@ jobs:
       - name: Checkout Workflow Repository
         uses: actions/checkout@v4
 
-      - name: Maximize build space
-        uses: easimon/maximize-build-space@master
-        with:
-          root-reserve-mb: 8192
-          temp-reserve-mb: 4096
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
-
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            bc bison ca-certificates ccache curl flex \
+            bc bison ca-certificates ccache cpio curl flex \
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
             binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi \
             git jq libelf-dev libssl-dev make python3 zip xz-utils
@@ -62,7 +52,7 @@ jobs:
         run: |
           mkdir -p "$GITHUB_WORKSPACE/toolchain"
           cd "$GITHUB_WORKSPACE/toolchain"
-          TAG="${{ inputs.clang_tag }}"
+          TAG="${{ inputs.clang_tag || '20260531' }}"
           DOWNLOAD_URL=$(curl -s "https://api.github.com/repos/greenforce-project/greenforce_clang/releases/tags/$TAG" \
             | jq -r '.assets[] | select(.name | test("gf-clang.*\\.tar\\.gz$")) | .browser_download_url' | head -n 1)
 
@@ -80,16 +70,10 @@ jobs:
       - name: Checkout Kernel Source
         uses: actions/checkout@v4
         with:
-          repository: ${{ inputs.kernel_repo }}
-          ref: ${{ inputs.kernel_branch }}
+          repository: ${{ inputs.kernel_repo || 'yapixel/android_kernel_xiaomi_libra' }}
+          ref: ${{ inputs.kernel_branch || 'susfs-3.10' }}
           path: kernel
           fetch-depth: 1
-
-      - name: Setup AnyKernel3
-        run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git "$GITHUB_WORKSPACE/AnyKernel3"
-          rm -rf "$GITHUB_WORKSPACE/AnyKernel3/.git"
-          cp "$GITHUB_WORKSPACE/anykernel.sh" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
 
       - name: Build Kernel
         run: |
@@ -128,6 +112,12 @@ jobs:
             exit 1
           fi
 
+      - name: Setup AnyKernel3
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git "$GITHUB_WORKSPACE/AnyKernel3"
+          rm -rf "$GITHUB_WORKSPACE/AnyKernel3/.git"
+          cp "$GITHUB_WORKSPACE/anykernel.sh" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
+
       - name: Package AnyKernel3 Zip
         id: package
         run: |
@@ -143,7 +133,7 @@ jobs:
           fi
 
           DATE=$(date +%y%m%d)
-          BRANCH="${{ inputs.kernel_branch }}"
+          BRANCH="${{ inputs.kernel_branch || 'susfs-3.10' }}"
           ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-${DATE}.zip"
           if [[ "$BRANCH" != *"ksu"* ]] && [[ "$BRANCH" != *"susfs"* ]]; then
             ZIP_NAME="libra_3.10.108-${DATE}.zip"
@@ -164,15 +154,15 @@ jobs:
           path: ${{ steps.package.outputs.zip_path }}
 
       - name: Create GitHub Release
-        if: ${{ inputs.upload_release == true }}
+        if: ${{ inputs.upload_release != false && inputs.upload_release != 'false' }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.package.outputs.date }}
-          name: Libra Kernel (${{ inputs.kernel_branch }}) - ${{ steps.package.outputs.date }}
+          tag_name: ${{ steps.package.outputs.date }}-${{ github.run_number }}
+          name: Libra Kernel (${{ inputs.kernel_branch || 'susfs-3.10' }}) - ${{ steps.package.outputs.date }}
           files: ${{ steps.package.outputs.zip_path }}
           body: |
             ## Xiaomi Mi 4c/4s (libra/aqua) Kernel Build
-            - **Branch**: `${{ inputs.kernel_branch }}`
+            - **Branch**: `${{ inputs.kernel_branch || 'susfs-3.10' }}`
             - **KSU Version**: `${{ steps.package.outputs.ksu_ver }}`
             - **Build Date**: `${{ steps.package.outputs.date }}`
             - **Package**: `${{ steps.package.outputs.zip_name }}`
