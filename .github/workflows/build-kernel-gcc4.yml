@@ -260,7 +260,6 @@ jobs:
           ./scripts/config --file arch/arm64/configs/libra_defconfig -e KALLSYMS
           ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_HOSTSREDIRECT
           ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_THRONE_TRACKER_ALWAYS_THREADED
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_COMPILE_AS_C23
           ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_HEURISTIC_IN_TREE_BUILD
 
           # Disable dynamic branch-link and LSM hooks for manual mode
@@ -591,7 +590,6 @@ jobs:
           ./scripts/config --file arch/arm64/configs/libra_defconfig -e KALLSYMS
           ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_HOSTSREDIRECT
           ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_THRONE_TRACKER_ALWAYS_THREADED
-          ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_COMPILE_AS_C23
           ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_HEURISTIC_IN_TREE_BUILD
 
           # Enable dynamic branch-link and LSM hooks for LSM mode
