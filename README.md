@@ -22,7 +22,7 @@ The workflow runs a parallel **matrix build** on the upstream base branch (`pers
 
 2. **Hook Modes**:
    - `manual`: Static C compile-time hooks (`fs/exec.c`, `fs/open.c`, `fs/stat.c`, `security/security.c`).
-   - `branch_link`: Upstream dynamic ARM64 opcode & LSM runtime binary hooking.
+   - `lsm`: Upstream dynamic ARM64 opcode & LSM runtime binary hooking.
    - Separate matrix displays for clear tracking and concurrent builds.
 
 3. **SuSFS Integration**:

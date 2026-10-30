@@ -23,7 +23,7 @@ on:
         options:
           - 'all'
           - 'manual'
-          - 'branch_link'
+          - 'lsm'
         default: 'all'
       ksu_branch:
         description: 'KernelSU Branch'
@@ -403,9 +403,9 @@ jobs:
           path: ${{ env.CCACHE_DIR }}
           key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
 
-  build_branch_link:
-    name: Branch Link Hook (SUSFS=${{ matrix.enable_susfs }})
-    if: github.event.inputs.hook_mode == 'all' || github.event.inputs.hook_mode == 'branch_link'
+  build_lsm:
+    name: LSM Hook (SUSFS=${{ matrix.enable_susfs }})
+    if: github.event.inputs.hook_mode == 'all' || github.event.inputs.hook_mode == 'lsm' || github.event.inputs.hook_mode == 'branch_link'
     needs: matrix_prep
     runs-on: ubuntu-24.04
     strategy:
@@ -431,11 +431,11 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-libra-branch_link-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-${{ github.run_id }}
+          key: ccache-libra-lsm-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-${{ github.run_id }}
           restore-keys: |
-            ccache-libra-branch_link-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-
-            ccache-libra-branch_link-${{ matrix.enable_susfs }}-
-            ccache-libra-branch_link-
+            ccache-libra-lsm-${{ matrix.enable_susfs }}-${{ github.event.inputs.ksu_branch || 'master' }}-
+            ccache-libra-lsm-${{ matrix.enable_susfs }}-
+            ccache-libra-lsm-
             ccache-libra-
 
       - name: Setup Ccache Configurations & Wrappers
@@ -572,7 +572,7 @@ jobs:
           echo "======================================"
           echo "🐧 Kernel Base: Linux 3.10.108 (Xiaomi Mi 4c libra)"
           echo "🔧 KSU Branch: $KSU_BRANCH (+$K_VER)"
-          echo "🪝 Hook Mode: branch_link"
+          echo "🪝 Hook Mode: lsm"
           echo "🛡️ SUSFS: ${{ matrix.enable_susfs }} ($SUSFS_VER)"
           echo "⚙️ Toolchain: $TOOLCHAIN_DISPLAY"
           echo "⚡ Ccache: ${{ github.event.inputs.use_ccache != 'false' && 'Enabled' || 'Disabled' }}"
@@ -621,7 +621,7 @@ jobs:
       - name: Ccache Performance Stats
         if: github.event.inputs.use_ccache != 'false'
         run: |
-          echo "=== Ccache Performance Stats (branch_link, SUSFS=${{ matrix.enable_susfs }}) ==="
+          echo "=== Ccache Performance Stats (lsm, SUSFS=${{ matrix.enable_susfs }}) ==="
           ccache -s
 
       - name: Package AnyKernel3
@@ -637,11 +637,11 @@ jobs:
           DATE=$(date +%y%m%d)
 
           if [ "${{ matrix.enable_susfs }}" = "true" ] && [ -n "$SUSFS_VER" ]; then
-            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (branch_link, SuSFS ${SUSFS_VER})/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-            ZIP_NAME="KSU_SUSFS_${SUSFS_VER}_libra_3.10.108+${KSU_VER}-branchlink-${DATE}.zip"
+            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (lsm, SuSFS ${SUSFS_VER})/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
+            ZIP_NAME="KSU_SUSFS_${SUSFS_VER}_libra_3.10.108+${KSU_VER}-lsm-${DATE}.zip"
           else
-            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (branch_link)/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
-            ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-branchlink-${DATE}.zip"
+            sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER} (lsm)/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
+            ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-lsm-${DATE}.zip"
           fi
 
           mkdir -p "$GITHUB_WORKSPACE/output_artifacts"
@@ -661,7 +661,7 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: kernel-branch_link-${{ matrix.enable_susfs }}
+          name: kernel-lsm-${{ matrix.enable_susfs }}
           path: output_artifacts/*
 
       - name: Save Ccache Data
@@ -673,8 +673,8 @@ jobs:
 
   publish_release:
     name: Publish Release
-    if: always() && github.event.inputs.create_release != 'false' && (needs.build_manual.result == 'success' || needs.build_branch_link.result == 'success')
-    needs: [matrix_prep, build_manual, build_branch_link]
+    if: always() && github.event.inputs.create_release != 'false' && (needs.build_manual.result == 'success' || needs.build_lsm.result == 'success')
+    needs: [matrix_prep, build_manual, build_lsm]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
