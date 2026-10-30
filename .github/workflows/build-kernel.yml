@@ -16,6 +16,8 @@ on:
         options:
           - 'susfs-3.10'
           - 'lineage-18.1-ksu'
+          - 'personal'
+          - 'manual-hook-test'
           - 'lineage-18.1'
       clang_tag:
         description: 'Greenforce Clang release tag (default: 20260531 for Clang 22)'
@@ -75,6 +77,19 @@ jobs:
           path: kernel
           fetch-depth: 1
 
+      - name: Extract KSU Version from Kernel Source
+        id: ksu_version
+        run: |
+          KSU_VER=""
+          if [ -f "$GITHUB_WORKSPACE/kernel/drivers/kernelsu/Makefile" ]; then
+            KSU_VER=$(grep -oP '(?<=KSU_VERSION=)[0-9]+' "$GITHUB_WORKSPACE/kernel/drivers/kernelsu/Makefile" | head -n 1 || true)
+          fi
+          if [ -z "$KSU_VER" ]; then
+            KSU_VER="Custom"
+          fi
+          echo "Detected integrated KSU version: $KSU_VER"
+          echo "ksu_ver=$KSU_VER" >> "$GITHUB_OUTPUT"
+
       - name: Build Kernel
         run: |
           cd "$GITHUB_WORKSPACE/kernel"
@@ -118,24 +133,19 @@ jobs:
           rm -rf "$GITHUB_WORKSPACE/AnyKernel3/.git"
           cp "$GITHUB_WORKSPACE/anykernel.sh" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
 
+          KSU_VER="${{ steps.ksu_version.outputs.ksu_ver }}"
+          sed -i -E "s/kernel\.ksuver=.*/kernel.ksuver=v${KSU_VER}/g" "$GITHUB_WORKSPACE/AnyKernel3/anykernel.sh"
+
       - name: Package AnyKernel3 Zip
         id: package
         run: |
           cp "$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb" "$GITHUB_WORKSPACE/AnyKernel3/"
 
-          # Determine KSU Version code if present
-          KSU_VER=""
-          if [ -f "$GITHUB_WORKSPACE/kernel/drivers/kernelsu/Makefile" ]; then
-            KSU_VER=$(grep -oP '(?<=KSU_VERSION=)[0-9]+' "$GITHUB_WORKSPACE/kernel/drivers/kernelsu/Makefile" | head -n 1 || true)
-          fi
-          if [ -z "$KSU_VER" ]; then
-            KSU_VER="Custom"
-          fi
-
+          KSU_VER="${{ steps.ksu_version.outputs.ksu_ver }}"
           DATE=$(date +%y%m%d)
           BRANCH="${{ inputs.kernel_branch || 'susfs-3.10' }}"
           ZIP_NAME="KSU_libra_3.10.108+${KSU_VER}-${DATE}.zip"
-          if [[ "$BRANCH" != *"ksu"* ]] && [[ "$BRANCH" != *"susfs"* ]]; then
+          if [[ "$BRANCH" != *"ksu"* ]] && [[ "$BRANCH" != *"susfs"* ]] && [[ "$BRANCH" != *"personal"* ]]; then
             ZIP_NAME="libra_3.10.108-${DATE}.zip"
           fi
 
@@ -158,7 +168,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.package.outputs.date }}-${{ github.run_number }}
-          name: Libra Kernel (${{ inputs.kernel_branch || 'susfs-3.10' }}) - ${{ steps.package.outputs.date }}
+          name: Libra Kernel (${{ inputs.kernel_branch || 'susfs-3.10' }}) + KSU ${{ steps.ksu_version.outputs.ksu_ver }} - ${{ steps.package.outputs.date }}
           files: ${{ steps.package.outputs.zip_path }}
           body: |
             ## Xiaomi Mi 4c/4s (libra/aqua) Kernel Build
