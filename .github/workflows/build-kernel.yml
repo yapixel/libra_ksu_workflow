@@ -726,13 +726,12 @@ jobs:
             echo "⚡ Release $TAG already exists for today. Overwriting assets and updating release..."
             gh release upload "$TAG" "${ZIP_FILES[@]}" --clobber
             gh release edit "$TAG" \
-              --target "${{ github.ref_name }}" \
               --title "$RELEASE_TITLE" \
               --notes-file release_body.md
           else
             echo "🚀 Creating new release for $TAG..."
             gh release create "$TAG" "${ZIP_FILES[@]}" \
-              --target "${{ github.ref_name }}" \
+              --target "${{ github.sha }}" \
               --title "$RELEASE_TITLE" \
               --notes-file release_body.md
           fi
