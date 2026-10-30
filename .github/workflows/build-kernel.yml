@@ -3,14 +3,19 @@ name: Build Libra/Aqua Kernel with KSU
 on:
   workflow_dispatch:
     inputs:
+      kernel_repo:
+        description: 'Kernel source repository'
+        required: true
+        default: 'yapixel/android_kernel_xiaomi_libra'
+        type: string
       kernel_branch:
         description: 'Kernel branch to build'
         required: true
-        default: 'lineage-18.1-ksu'
+        default: 'susfs-3.10'
         type: choice
         options:
-          - 'lineage-18.1-ksu'
           - 'susfs-3.10'
+          - 'lineage-18.1-ksu'
           - 'lineage-18.1'
       clang_tag:
         description: 'Greenforce Clang release tag (default: 20260531 for Clang 22)'
@@ -75,7 +80,7 @@ jobs:
       - name: Checkout Kernel Source
         uses: actions/checkout@v4
         with:
-          repository: ximi-libra/android_kernel_xiaomi_libra
+          repository: ${{ inputs.kernel_repo }}
           ref: ${{ inputs.kernel_branch }}
           path: kernel
           fetch-depth: 1
