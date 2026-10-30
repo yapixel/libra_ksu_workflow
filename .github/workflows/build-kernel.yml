@@ -1,4 +1,4 @@
-name: Build Libra/Aqua Kernel with KSU
+name: Build Libra Kernel with KSU
 
 on:
   workflow_dispatch:
@@ -322,7 +322,7 @@ jobs:
             exit 1
           fi
 
-          printf "## Xiaomi Mi 4c/4s (libra/aqua) Kernel Build\n" > release_body.md
+          printf "## Xiaomi Mi 4c (libra) Kernel Build\n" > release_body.md
           printf -- "- **Kernel Repository**: \`%s\`\n" "${{ github.event.inputs.kernel_repo || 'ximi-libra/android_kernel_xiaomi_libra' }}" >> release_body.md
           printf -- "- **Kernel Branch**: \`%s\`\n" "$BRANCH" >> release_body.md
           printf -- "- **Build Date**: \`%s\`\n\n" "$DATE" >> release_body.md
