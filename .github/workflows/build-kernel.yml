@@ -566,11 +566,8 @@ jobs:
 
           echo "Applying SuSFS kernel VFS patch..."
           cd "$GITHUB_WORKSPACE/kernel"
-          # In LSM mode, manual hook patch is not applied, so fs/stat.c line is 314
-          sed -i 's/@@ -318,10 +354,20 @@/@@ -314,10 +350,20 @@/' "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/51_deinlined_susfs_hooks_kernel-3.10.patch"
-          # ...and kernel/sys.c has no manual reboot hook, so override_release is 5 lines earlier
-          sed -i 's/@@ -1391,12 +1405,24 @@/@@ -1386,12 +1400,24 @@/' "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/51_deinlined_susfs_hooks_kernel-3.10.patch"
-          patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/51_deinlined_susfs_hooks_kernel-3.10.patch"
+          # Patch 50 is Patch 51 rebased onto a tree without the manual hook patches
+          patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_kernel-3.10.patch"
 
           echo "Configuring SuSFS in libra_defconfig..."
           ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS
