@@ -246,12 +246,14 @@ jobs:
 
       - name: Apply Manual Hook Patches
         run: |
+          # Fail on any reject, fuzz or offset: patches must apply exactly
+          apply_patch() { out=$(patch -p1 --fuzz=0 --no-backup-if-mismatch < "$1") || { echo "$out"; exit 1; }; echo "$out"; ! grep -E "offset|fuzz" <<< "$out" || { echo "::error::$1 did not apply exactly"; exit 1; }; }
           cd "$GITHUB_WORKSPACE/kernel"
           echo "Applying manual hook v2.3 (01_ksu_manual_hooks_v2.3.patch)..."
-          patch -p1 < "$GITHUB_WORKSPACE/patches/01_ksu_manual_hooks_v2.3.patch"
+          apply_patch "$GITHUB_WORKSPACE/patches/01_ksu_manual_hooks_v2.3.patch"
 
           echo "Applying manual security hooks v2.0 (02_ksu_manual_security_hooks_v2.0.patch)..."
-          patch -p1 < "$GITHUB_WORKSPACE/patches/02_ksu_manual_security_hooks_v2.0.patch"
+          apply_patch "$GITHUB_WORKSPACE/patches/02_ksu_manual_security_hooks_v2.0.patch"
 
           echo "Stripping [[clang::always_inline]] for GCC 4.9 C syntax compatibility..."
           sed -i 's/\[\[clang::always_inline\]\] //g' fs/exec.c fs/open.c fs/stat.c
@@ -259,6 +261,8 @@ jobs:
       - name: Apply SuSFS v2.3.0 Patches
         if: matrix.enable_susfs == 'true'
         run: |
+          # Fail on any reject, fuzz or offset: patches must apply exactly
+          apply_patch() { out=$(patch -p1 --fuzz=0 --no-backup-if-mismatch < "$1") || { echo "$out"; exit 1; }; echo "$out"; ! grep -E "offset|fuzz" <<< "$out" || { echo "::error::$1 did not apply exactly"; exit 1; }; }
           cd "$GITHUB_WORKSPACE/kernel"
           echo "Cloning yapixel/susfs4ksu (branch: kernel-3.10)..."
           git clone --depth 1 -b kernel-3.10 https://github.com/yapixel/susfs4ksu.git "$GITHUB_WORKSPACE/susfs4ksu"
@@ -270,11 +274,11 @@ jobs:
 
           echo "Applying SuSFS KernelSU patch..."
           cd "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
-          patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/KernelSU/11_enable_susfs_for_ksu.patch"
+          apply_patch "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/KernelSU/11_enable_susfs_for_ksu.patch"
 
           echo "Applying SuSFS kernel VFS patch..."
           cd "$GITHUB_WORKSPACE/kernel"
-          patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/51_deinlined_susfs_hooks_kernel-3.10.patch"
+          apply_patch "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/51_deinlined_susfs_hooks_kernel-3.10.patch"
 
           echo "Configuring SuSFS in libra_defconfig..."
           ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS
@@ -551,6 +555,8 @@ jobs:
       - name: Apply SuSFS v2.3.0 Patches
         if: matrix.enable_susfs == 'true'
         run: |
+          # Fail on any reject, fuzz or offset: patches must apply exactly
+          apply_patch() { out=$(patch -p1 --fuzz=0 --no-backup-if-mismatch < "$1") || { echo "$out"; exit 1; }; echo "$out"; ! grep -E "offset|fuzz" <<< "$out" || { echo "::error::$1 did not apply exactly"; exit 1; }; }
           cd "$GITHUB_WORKSPACE/kernel"
           echo "Cloning yapixel/susfs4ksu (branch: kernel-3.10)..."
           git clone --depth 1 -b kernel-3.10 https://github.com/yapixel/susfs4ksu.git "$GITHUB_WORKSPACE/susfs4ksu"
@@ -562,11 +568,11 @@ jobs:
 
           echo "Applying SuSFS KernelSU patch..."
           cd "$GITHUB_WORKSPACE/kernel/drivers/kernelsu"
-          patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/KernelSU/11_enable_susfs_for_ksu.patch"
+          apply_patch "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/KernelSU/11_enable_susfs_for_ksu.patch"
 
           echo "Applying SuSFS kernel VFS patch..."
           cd "$GITHUB_WORKSPACE/kernel"
-          patch -p1 < "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/51_deinlined_susfs_hooks_kernel-3.10.patch"
+          apply_patch "$GITHUB_WORKSPACE/susfs4ksu/kernel_patches/51_deinlined_susfs_hooks_kernel-3.10.patch"
 
           echo "Configuring SuSFS in libra_defconfig..."
           ./scripts/config --file arch/arm64/configs/libra_defconfig -e KSU_SUSFS
